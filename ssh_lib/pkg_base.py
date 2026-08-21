@@ -9,15 +9,13 @@ def pkg_base(c):
     # A clean AL2023 image already ships curl, ca-certificates, tar, gzip,
     # util-linux, findutils and python3, so those are intentionally omitted.
     required = [
-        # downloading / unpacking / mounting tiles
-        'aria2',  # download_file_aria2()
+        # unpacking / serving tiles
         'pigz',  # unpigz for tiles.btrfs.gz
-        'btrfs-progs',  # mounting the btrfs image (mkfs for tile_gen)
         'unzip',
-        'wget',
-        'git',  # repo + planetiler clone (tile_gen)
+        'wget',  # also the download fallback when aria2 is absent
+        'git',
         'python3-pip',
-        # build deps for `pip install pycurl` (used by tile_gen/http_host)
+        # build deps for `pip install pycurl` (used by http_host)
         'gcc',
         'python3-devel',
         'libcurl-devel',
@@ -26,9 +24,18 @@ def pkg_base(c):
 
     pkg_install(c, ' '.join(required))
 
-    # Optional quality-of-life / monitoring tools. Best-effort only: install
-    # what AL2023's repos provide and silently skip the rest.
+    # Optional quality-of-life / monitoring tools plus aria2. Best-effort only:
+    # install what AL2023's repos provide and silently skip the rest.
+    #
+    # NOTE on btrfs / aria2 for http-host:
+    #   * btrfs-progs is NOT needed to serve tiles: the AL2023 kernel mounts the
+    #     tiles.btrfs image read-only on its own (mount -a). The btrfs userspace
+    #     tools are only used by tile_gen (mkfs/balance/resize).
+    #   * aria2 is only a download accelerator; download_file_aria2() falls back
+    #     to wget when aria2c is not installed, so it is optional here.
+    #   Both live in EPEL/SPAL, not the AL2023 base repos.
     optional = [
+        'aria2',
         'htop',
         'tmux',
         'mc',
