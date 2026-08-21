@@ -1,4 +1,5 @@
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -41,21 +42,29 @@ def download_file_aria2(url: str, local_file: Path):
     print(f'  downloading {url} into {local_file}')
     local_file.unlink(missing_ok=True)
 
-    subprocess.run(
-        [
-            'aria2c',
-            '--split=8',
-            '--max-connection-per-server=8',
-            '--file-allocation=none',
-            '--min-split-size=1M',
-            '-d',
-            local_file.parent,
-            '-o',
-            local_file.name,
-            url,
-        ],
-        check=True,
-    )
+    if shutil.which('aria2c'):
+        subprocess.run(
+            [
+                'aria2c',
+                '--split=8',
+                '--max-connection-per-server=8',
+                '--file-allocation=none',
+                '--min-split-size=1M',
+                '-d',
+                local_file.parent,
+                '-o',
+                local_file.name,
+                url,
+            ],
+            check=True,
+        )
+    else:
+        # aria2 is not in the AL2023 base repos; fall back to wget, which is
+        # always installed. Slower (single connection) but functionally equal.
+        subprocess.run(
+            ['wget', '--continue', '-O', str(local_file), url],
+            check=True,
+        )
 
 
 def python_venv_executable() -> Path:
