@@ -1,33 +1,29 @@
 from ssh_lib import ASSETS_DIR
 from ssh_lib.utils import (
-    apt_get_install,
-    apt_get_purge,
-    apt_get_update,
     exists,
     get_latest_release_github,
+    pkg_install,
     put,
     put_str,
     sudo_cmd,
-    ubuntu_codename,
 )
 
 
 def nginx(c):
-    codename = ubuntu_codename(c)
-
     if not exists(c, '/usr/sbin/nginx'):
-        sudo_cmd(
-            c,
-            'curl https://nginx.org/keys/nginx_signing.key '
-            '| gpg --dearmor --yes -o /etc/apt/keyrings/nginx.gpg',
-        )
+        # nginx mainline RPM repo for Amazon Linux 2023
         put_str(
             c,
-            '/etc/apt/sources.list.d/nginx.list',
-            f'deb [signed-by=/etc/apt/keyrings/nginx.gpg] http://nginx.org/packages/mainline/ubuntu {codename} nginx',
+            '/etc/yum.repos.d/nginx.repo',
+            '[nginx-mainline]\n'
+            'name=nginx mainline repo\n'
+            'baseurl=http://nginx.org/packages/mainline/amzn/2023/$basearch/\n'
+            'gpgcheck=1\n'
+            'enabled=1\n'
+            'gpgkey=https://nginx.org/keys/nginx_signing.key\n'
+            'module_hotfixes=true\n',
         )
-        apt_get_update(c)
-        apt_get_install(c, 'nginx')
+        pkg_install(c, 'nginx')
 
     c.sudo('rm -rf /data/nginx/config')
     c.sudo('mkdir -p /data/nginx/config')
@@ -49,22 +45,21 @@ def nginx(c):
     sudo_cmd(c, 'curl https://ssl-config.mozilla.org/ffdhe2048.txt -o /etc/nginx/ffdhe2048.txt')
 
     c.sudo('nginx -t')
-    c.sudo('service nginx restart')
+    c.sudo('systemctl enable nginx')
+    c.sudo('systemctl restart nginx')
 
 
 def certbot(c):
-    apt_get_install(c, 'snapd')
+    # snapd is not available on Amazon Linux 2023, so use certbot's official
+    # pip-in-a-venv install method into /opt/certbot.
+    pkg_install(c, 'python3 python3-pip augeas-libs')
 
-    # this is silly, but needs to be run twice
-    c.sudo('snap install core', warn=True, echo=True)
-    c.sudo('snap install core', warn=True, echo=True)
+    if not exists(c, '/opt/certbot/bin/certbot'):
+        c.sudo('python3 -m venv /opt/certbot')
 
-    c.sudo('snap refresh core', warn=True)
-
-    apt_get_purge(c, 'certbot')
-    c.sudo('snap install --classic certbot', warn=True)
-    c.sudo('snap set certbot trust-plugin-with-root=ok', warn=True)
-    c.sudo('snap install certbot-dns-cloudflare', warn=True)
+    c.sudo('/opt/certbot/bin/pip install --upgrade pip', echo=True)
+    c.sudo('/opt/certbot/bin/pip install certbot certbot-dns-cloudflare', echo=True)
+    c.sudo('ln -snf /opt/certbot/bin/certbot /usr/local/bin/certbot')
 
 
 def lego(c):

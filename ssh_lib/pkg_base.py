@@ -1,81 +1,52 @@
 from ssh_lib.utils import (
-    apt_get_install,
-    apt_get_update,
+    pkg_install,
+    pkg_update,
 )
 
 
 def pkg_base(c):
-    pkg_list = [
-        'aria2',
-        'build-essential',
-        'curl',
-        'dnsutils',
-        'git',
-        'htop',
-        'lsb-release',
-        'pigz',
-        'rsync',
+    # Packages actually required for OFM to work on Amazon Linux 2023.
+    # A clean AL2023 image already ships curl, ca-certificates, tar, gzip,
+    # util-linux, findutils and python3, so those are intentionally omitted.
+    required = [
+        # downloading / unpacking / mounting tiles
+        'aria2',  # download_file_aria2()
+        'pigz',  # unpigz for tiles.btrfs.gz
+        'btrfs-progs',  # mounting the btrfs image (mkfs for tile_gen)
         'unzip',
         'wget',
-        'psmisc',
-        'util-linux',
-        #
-        'btrfs-progs',
-        #
-        'ca-certificates',
-        'gnupg-agent',
-        'gnupg2',
-        'ubuntu-keyring',
-        #
-        'iftop',
-        'nload',
-        'vnstat',
-        #
-        'python3',
-        'python3-venv',
-        #
-        'acpid',
-        'autojump',
-        'bash-completion',
-        'btop',
-        'ctop',
-        'dbus',
-        'direnv',
-        'fd-find',
-        'file',
-        'ioping',
-        'libffi-dev',
-        'libssl-dev',
-        'lsof',
-        'man-db',
-        'mc',
-        'nano',
-        'ncdu',
-        'net-tools',
-        'netbase',
-        'nethogs',
-        'openssh-client',
-        'p7zip-full',
-        'pkg-config',
-        'psmisc',
-        'ripgrep',
-        'silversearcher-ag',
-        'time',
-        'tmux',
-        #
-        # 'dstat',
-        # 'iperf3',
-        # 'iproute2',
-        # 'nasm',
+        'git',  # repo + planetiler clone (tile_gen)
+        'python3-pip',
+        # build deps for `pip install pycurl` (used by tile_gen/http_host)
+        'gcc',
+        'python3-devel',
+        'libcurl-devel',
+        'openssl-devel',
     ]
 
-    apt_get_install(c, ' '.join(pkg_list))
+    pkg_install(c, ' '.join(required))
 
-    c.sudo('ln -snf $(which fdfind) /usr/local/bin/fd', warn=True)
+    # Optional quality-of-life / monitoring tools. Best-effort only: install
+    # what AL2023's repos provide and silently skip the rest.
+    optional = [
+        'htop',
+        'tmux',
+        'mc',
+        'ncdu',
+        'nano',
+        'lsof',
+        'rsync',
+        'file',
+        'bind-utils',  # dig / nslookup
+        'net-tools',
+        'man-db',
+        'bash-completion',
+        'vnstat',
+    ]
+
+    pkg_install(c, ' '.join(optional), warn=True, skip_broken=True)
 
 
 def pkg_upgrade(c):
-    apt_get_update(c)
-    c.sudo(
-        'DEBIAN_FRONTEND=noninteractive apt-get dist-upgrade -y -o Dpkg::Options::="--force-confold"'
-    )
+    pkg_update(c)
+    c.sudo('dnf upgrade -y')

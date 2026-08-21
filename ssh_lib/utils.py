@@ -142,32 +142,36 @@ def random_string(length):
     return ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(length))
 
 
-def ubuntu_release(c):
-    return c.run('lsb_release -rs').stdout.strip()[:2]
+def distro_id(c):
+    """Returns the /etc/os-release ID, e.g. 'amzn' on Amazon Linux 2023."""
+    return c.run('. /etc/os-release && echo "$ID"', hide=True).stdout.strip()
 
 
-def ubuntu_codename(c):
-    return c.run('lsb_release -cs').stdout.strip()
+def distro_version(c):
+    """Returns the /etc/os-release VERSION_ID, e.g. '2023' on Amazon Linux 2023."""
+    return c.run('. /etc/os-release && echo "$VERSION_ID"', hide=True).stdout.strip()
 
 
-def apt_get_update(c):
-    c.sudo('apt-get update')
+def pkg_update(c):
+    # dnf refreshes metadata automatically; makecache keeps behaviour explicit
+    c.sudo('dnf -y makecache', warn=True)
 
 
-def apt_get_install(c, pkgs, warn=False):
+def pkg_install(c, pkgs, warn=False, skip_broken=False):
+    skip = '--skip-broken ' if skip_broken else ''
     c.sudo(
-        f'DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends {pkgs}',
+        f'dnf install -y {skip}{pkgs}',
         warn=warn,
         echo=True,
     )
 
 
-def apt_get_purge(c, pkgs):
-    c.sudo(f'DEBIAN_FRONTEND=noninteractive apt-get purge -y {pkgs}')
+def pkg_remove(c, pkgs):
+    c.sudo(f'dnf remove -y {pkgs}', warn=True)
 
 
-def apt_get_autoremove(c):
-    c.sudo('DEBIAN_FRONTEND=noninteractive apt-get autoremove -y')
+def pkg_autoremove(c):
+    c.sudo('dnf autoremove -y')
 
 
 def get_username(c):
@@ -177,8 +181,8 @@ def get_username(c):
 def add_user(c, username, passwd=None, uid=None):
     uid_str = f'--uid={uid}' if uid else ''
 
-    # --disabled-password -> ssh-key login only
-    c.sudo(f'adduser --disabled-password --gecos "" {uid_str} {username}', warn=True)
+    # -m creates the home dir; no password -> ssh-key login only on AL2023
+    c.sudo(f'useradd -m -s /bin/bash {uid_str} {username}', warn=True)
     if passwd:
         sudo_cmd(c, f'echo "{username}:{passwd}" | chpasswd')
 
@@ -189,7 +193,8 @@ def remove_user(c, username):
 
 
 def enable_sudo(c, username, nopasswd=False):
-    c.sudo(f'usermod -aG sudo {username}')
+    # 'wheel' is the sudo group on Amazon Linux / RHEL-family distros
+    c.sudo(f'usermod -aG wheel {username}')
     if nopasswd:
         put_str(c, '/etc/sudoers.d/tmp.', f'{username} ALL=(ALL) NOPASSWD:ALL')
         set_permission(c, '/etc/sudoers.d/tmp.', permissions='440', user='root')

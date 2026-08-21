@@ -1,5 +1,5 @@
 from ssh_lib import MODULES_DIR
-from ssh_lib.utils import apt_get_install, exists, put
+from ssh_lib.utils import exists, pkg_install, put
 
 
 def c1000k(c):
@@ -18,6 +18,6 @@ def c1000k(c):
 
 
 def wrk(c):
-    apt_get_install(c, 'wrk')
+    pkg_install(c, 'wrk', warn=True, skip_broken=True)
     c.sudo('mkdir -p /data/ofm/benchmark')
     put(c, f'{MODULES_DIR}/http_host/benchmark/wrk_custom_list.lua', '/data/ofm/benchmark')
