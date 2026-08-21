@@ -16,7 +16,6 @@ class Configuration:
 
     mnt_dir = Path('/mnt/ofm')
 
-    certs_dir = Path('/data/nginx/certs')
     nginx_confs = Path(__file__).parent / 'nginx_confs'
 
     if Path('/data/ofm').exists():

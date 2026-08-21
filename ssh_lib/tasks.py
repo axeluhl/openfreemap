@@ -13,7 +13,7 @@ from ssh_lib import (
 )
 from ssh_lib.benchmark import c1000k, wrk
 from ssh_lib.kernel import kernel_limits1m, kernel_somaxconn65k
-from ssh_lib.nginx import certbot, nginx
+from ssh_lib.nginx import nginx
 from ssh_lib.pkg_base import pkg_base, pkg_upgrade
 from ssh_lib.planetiler import install_planetiler
 from ssh_lib.rclone import rclone
@@ -87,7 +87,6 @@ def prepare_http_host(c):
     kernel_limits1m(c)
 
     nginx(c)
-    certbot(c)
 
     c.sudo('rm -rf /data/ofm/http_host/logs')
     c.sudo('mkdir -p /data/ofm/http_host/logs')
@@ -98,16 +97,6 @@ def prepare_http_host(c):
     c.sudo('chown nginx:nginx /data/ofm/http_host/logs_nginx')
 
     upload_http_host_files(c)
-
-    if dotenv_val('DOMAIN_ROUNDROBIN'):
-        assert (CONFIG_DIR / 'rclone.conf').exists()
-        put(
-            c,
-            CONFIG_DIR / 'rclone.conf',
-            f'{REMOTE_CONFIG}/rclone.conf',
-            permissions=400,
-        )
-        put(c, MODULES_DIR / 'http_host' / 'cron.d' / 'ofm_roundrobin_reader', '/etc/cron.d/')
 
     c.sudo(f'{VENV_BIN}/pip install -e {HTTP_HOST_BIN} --use-pep517')
 
@@ -143,83 +132,23 @@ def install_benchmark(c):
     wrk(c)
 
 
-def setup_roundrobin_writer(c):
-    letsencrypt_email = dotenv_val('LETSENCRYPT_EMAIL').lower()
-    domain_roundrobin = dotenv_val('DOMAIN_ROUNDROBIN').lower()
-    assert letsencrypt_email
-    assert domain_roundrobin
-    assert (CONFIG_DIR / 'rclone.conf').exists()
-    assert (CONFIG_DIR / 'cloudflare.ini').exists()
-
-    rclone(c)
-    certbot(c)
-
-    c.sudo(f'mkdir -p {REMOTE_CONFIG}')
-
-    put(
-        c,
-        CONFIG_DIR / 'rclone.conf',
-        f'{REMOTE_CONFIG}/rclone.conf',
-        permissions=400,
-    )
-
-    put(
-        c,
-        CONFIG_DIR / 'cloudflare.ini',
-        f'{REMOTE_CONFIG}/cloudflare.ini',
-        permissions=400,
-    )
-
-    c.sudo('rm -rf /data/ofm/roundrobin')
-
-    put(
-        c,
-        MODULES_DIR / 'roundrobin' / 'rclone_write.sh',
-        '/data/ofm/roundrobin/rclone_write.sh',
-        create_parent_dir=True,
-        permissions=500,
-    )
-
-    # only use with --staging
-    # c.sudo('certbot delete --noninteractive --cert-name ofm_roundrobin', warn=True)
-
-    sudo_cmd(
-        c,
-        'certbot certonly '
-        '--dns-cloudflare '
-        f'--dns-cloudflare-credentials {REMOTE_CONFIG}/cloudflare.ini '
-        '--dns-cloudflare-propagation-seconds 20 '
-        f'--noninteractive '
-        f'-m {letsencrypt_email} '
-        f'--agree-tos '
-        f'--cert-name=ofm_roundrobin '
-        f'--deploy-hook /data/ofm/roundrobin/rclone_write.sh '
-        f'-d {domain_roundrobin}',
-        # f'-d {domain2_roundrobin}',
-    )
-
-
 def upload_config_json(c):
     domain_direct = dotenv_val('DOMAIN_DIRECT').lower()
-    domain_roundrobin = dotenv_val('DOMAIN_ROUNDROBIN').lower()
     skip_planet = dotenv_val('SKIP_PLANET').lower() == 'true'
-    self_signed_certs = dotenv_val('SELF_SIGNED_CERTS').lower() == 'true'
-    letsencrypt_email = dotenv_val('LETSENCRYPT_EMAIL').lower()
 
-    if not (domain_direct or domain_roundrobin):
-        sys.exit('Please specify DOMAIN_DIRECT or DOMAIN_ROUNDROBIN in config/.env')
-
-    if domain_direct and not letsencrypt_email and not self_signed_certs:
-        sys.exit('Please add your email to LETSENCRYPT_EMAIL when using DOMAIN_DIRECT')
+    # TLS is terminated upstream (e.g. an AWS ALB), so no certificate settings
+    # are needed here. domain_direct is the public hostname used in server_name
+    # and in the generated TileJSON/style URLs.
+    if not domain_direct:
+        sys.exit('Please specify DOMAIN_DIRECT in config/.env')
 
     http_host_list = [h.strip() for h in dotenv_val('HTTP_HOST_LIST').split(',') if h.strip()]
 
     config = {
         'domain_direct': domain_direct,
-        'domain_roundrobin': domain_roundrobin,
-        'letsencrypt_email': letsencrypt_email,
+        # kept as an empty passthrough for the optional loadbalancer/tile_gen modules
+        'domain_roundrobin': dotenv_val('DOMAIN_ROUNDROBIN').lower(),
         'skip_planet': skip_planet,
-        'self_signed_certs': self_signed_certs,
         'http_host_list': http_host_list,
         'telegram_token': dotenv_val('TELEGRAM_TOKEN'),
         'telegram_chat_id': dotenv_val('TELEGRAM_CHAT_ID'),

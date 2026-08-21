@@ -1,4 +1,3 @@
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -13,83 +12,19 @@ def write_nginx_config():
     if not config.mnt_dir.exists():
         sys.exit('  mount needs to be run first')
 
-    curl_text_mix = ''
-
     domain_direct = config.ofm_config['domain_direct']
-    domain_roundrobin = config.ofm_config['domain_roundrobin']
-    self_signed_certs = config.ofm_config['self_signed_certs']
 
-    # remove old configs and certs
+    # remove old configs
     for file in Path('/data/nginx/sites').glob('ofm_*.conf'):
         file.unlink()
 
-    for file in Path('/data/nginx/certs').glob('ofm_*'):
-        file.unlink()
-
-    # processing Round Robin DNS config
-    if domain_roundrobin:
-        if not config.rclone_config.is_file():
-            sys.exit('rclone.conf missing')
-
-        # download the roundrobin certificate from bucket using rclone
-        write_roundrobin_reader_script(domain_roundrobin)
-        subprocess.run(['bash', config.http_host_bin / 'roundrobin_reader.sh'], check=True)
-
-        curl_text_mix += create_nginx_conf(
-            template_path=config.nginx_confs / 'roundrobin.conf',
-            local='ofm_roundrobin',
-            domain=domain_roundrobin,
-        )
-
-    # processing Let's Encrypt config
-    if domain_direct:
-        direct_cert = config.certs_dir / 'ofm_direct.cert'
-        direct_key = config.certs_dir / 'ofm_direct.key'
-
-        if not direct_cert.is_file() or not direct_key.is_file():
-            shutil.copyfile(Path('/etc/nginx/ssl/dummy.cert'), direct_cert)
-            shutil.copyfile(Path('/etc/nginx/ssl/dummy.key'), direct_key)
-
-        curl_text_mix += create_nginx_conf(
-            template_path=config.nginx_confs / 'le.conf',
-            local='ofm_direct',
-            domain=domain_direct,
-        )
-
-        subprocess.run(['nginx', '-t'], check=True)
-        subprocess.run(['systemctl', 'reload', 'nginx'], check=True)
-
-        if not self_signed_certs:
-            subprocess.run(
-                [
-                    'certbot',
-                    'certonly',
-                    '--webroot',
-                    '--webroot-path=/data/nginx/acme-challenges',
-                    '--noninteractive',
-                    '-m',
-                    config.ofm_config['letsencrypt_email'],
-                    '--agree-tos',
-                    '--cert-name=ofm_direct',
-                    # '--staging',
-                    '--deploy-hook',
-                    'nginx -t && service nginx reload',
-                    '-d',
-                    domain_direct,
-                ],
-                check=True,
-            )
-
-            # link certs to nginx dir
-            direct_cert.unlink()
-            direct_key.unlink()
-
-            etc_cert = Path('/etc/letsencrypt/live/ofm_direct/fullchain.pem')
-            etc_key = Path('/etc/letsencrypt/live/ofm_direct/privkey.pem')
-            assert etc_cert.is_file()
-            assert etc_key.is_file()
-            direct_cert.symlink_to(etc_cert)
-            direct_key.symlink_to(etc_key)
+    # TLS is terminated upstream (e.g. an AWS ALB); nginx serves plain HTTP on
+    # port 80 only, so there are no certificates to install or link here.
+    curl_text_mix = create_nginx_conf(
+        template_path=config.nginx_confs / 'direct.conf',
+        local='ofm_direct',
+        domain=domain_direct,
+    )
 
     subprocess.run(['nginx', '-t'], check=True)
     subprocess.run(['systemctl', 'reload', 'nginx'], check=True)
@@ -321,14 +256,3 @@ def create_latest_locations(*, local: str, domain: str) -> str:
 
     return location_str
 
-
-def write_roundrobin_reader_script(domain_roundrobin):
-    script = f"""
-#!/usr/bin/env bash
-export RCLONE_CONFIG=/data/ofm/config/rclone.conf
-rclone copyto -v "remote:ofm-private/roundrobin/{domain_roundrobin}/ofm_roundrobin.cert" /data/nginx/certs/ofm_roundrobin.cert
-rclone copyto -v "remote:ofm-private/roundrobin/{domain_roundrobin}/ofm_roundrobin.key" /data/nginx/certs/ofm_roundrobin.key
-    """.strip()
-
-    with open(config.http_host_bin / 'roundrobin_reader.sh', 'w') as fp:
-        fp.write(script)
