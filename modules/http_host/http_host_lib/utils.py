@@ -61,8 +61,22 @@ def download_file_aria2(url: str, local_file: Path):
     else:
         # aria2 is not in the AL2023 base repos; fall back to wget, which is
         # always installed. Slower (single connection) but functionally equal.
+        # The btrfs images are huge (~100 GB), so make wget resilient to
+        # mid-stream connection drops: retry indefinitely and resume the
+        # partial file in place, with a read timeout so a stalled connection
+        # aborts and retries instead of hanging.
         subprocess.run(
-            ['wget', '--continue', '-O', str(local_file), url],
+            [
+                'wget',
+                '--continue',
+                '--tries=0',
+                '--timeout=60',
+                '--waitretry=10',
+                '--retry-connrefused',
+                '-O',
+                str(local_file),
+                url,
+            ],
             check=True,
         )
 
