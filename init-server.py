@@ -10,6 +10,7 @@ from ssh_lib.tasks import (
     prepare_tile_gen,
     run_http_host_sync,
     setup_loadbalancer,
+    upload_config_json,
 )
 from ssh_lib.utils import (
     put,
@@ -128,11 +129,14 @@ def loadbalancer(hostname, user, port, noninteractive):
 
 @cli.command()
 @common_options
-def http_host_sync(hostname, user, port, noninteractive):
+@click.option('--domain', help='Update nginx server_name to this hostname before syncing (overrides DOMAIN_DIRECT in .env)')
+def http_host_sync(hostname, user, port, noninteractive, domain):
     if not noninteractive and not click.confirm(f'Run script on {hostname}?'):
         return
 
     c = get_connection(hostname, user, port)
+    if domain:
+        upload_config_json(c, domain=domain)
     run_http_host_sync(c)
 
 
