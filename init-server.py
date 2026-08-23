@@ -57,13 +57,14 @@ def cli():
 
 @cli.command()
 @common_options
-def http_host_static(hostname, user, port, noninteractive):
+@click.option('--domain', help='Public hostname for nginx server_name (overrides DOMAIN_DIRECT in .env)')
+def http_host_static(hostname, user, port, noninteractive, domain):
     if not noninteractive and not click.confirm(f'Run script on {hostname}?'):
         return
 
     c = get_connection(hostname, user, port)
 
-    prepare_shared(c)
+    prepare_shared(c, domain=domain)
     prepare_http_host(c)
 
     run_http_host_sync(c)
@@ -71,7 +72,8 @@ def http_host_static(hostname, user, port, noninteractive):
 
 @cli.command()
 @common_options
-def http_host_autoupdate(hostname, user, port, noninteractive):
+@click.option('--domain', help='Public hostname for nginx server_name (overrides DOMAIN_DIRECT in .env)')
+def http_host_autoupdate(hostname, user, port, noninteractive, domain):
     if not noninteractive and not click.confirm(f'Run script on {hostname}?'):
         return
 
@@ -79,7 +81,7 @@ def http_host_autoupdate(hostname, user, port, noninteractive):
 
     c.sudo('rm -f /etc/cron.d/ofm_http_host')
 
-    prepare_shared(c)
+    prepare_shared(c, domain=domain)
     prepare_http_host(c)
 
     run_http_host_sync(c)  # disable for first install if you don't want to wait

@@ -20,7 +20,7 @@ from ssh_lib.rclone import rclone
 from ssh_lib.utils import add_user, enable_sudo, put, put_dir, put_str, sudo_cmd
 
 
-def prepare_shared(c):
+def prepare_shared(c, domain=None):
     # creates ofm user with uid=2000, disabled password and nopasswd sudo
     add_user(c, 'ofm', uid=2000)
     enable_sudo(c, 'ofm', nopasswd=True)
@@ -33,7 +33,7 @@ def prepare_shared(c):
     c.sudo(f'chown ofm:ofm {REMOTE_CONFIG}')
     c.sudo(f'chown ofm:ofm {OFM_DIR}')
 
-    upload_config_json(c)
+    upload_config_json(c, domain=domain)
 
     prepare_venv(c)
 
@@ -132,15 +132,17 @@ def install_benchmark(c):
     wrk(c)
 
 
-def upload_config_json(c):
-    domain_direct = dotenv_val('DOMAIN_DIRECT').lower()
+def upload_config_json(c, domain=None):
+    # The nginx server_name / public hostname can be passed on the command line
+    # (--domain); otherwise it falls back to DOMAIN_DIRECT in config/.env.
+    domain_direct = (domain or dotenv_val('DOMAIN_DIRECT')).lower()
     skip_planet = dotenv_val('SKIP_PLANET').lower() == 'true'
 
     # TLS is terminated upstream (e.g. an AWS ALB), so no certificate settings
     # are needed here. domain_direct is the public hostname used in server_name
     # and in the generated TileJSON/style URLs.
     if not domain_direct:
-        sys.exit('Please specify DOMAIN_DIRECT in config/.env')
+        sys.exit('Please specify a domain via --domain or DOMAIN_DIRECT in config/.env')
 
     http_host_list = [h.strip() for h in dotenv_val('HTTP_HOST_LIST').split(',') if h.strip()]
 
