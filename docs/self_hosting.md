@@ -62,12 +62,39 @@ On macOS you can do `brew install python`
 
 #### 4. Prepare the Python environment
 
-You run the deploy script locally, and it deploys to a remote server over SSH. You can use a virtualenv if you are used to working with them, but it's not necessary.
+You run the deploy script locally, and it deploys to a remote server over SSH.
+The dependencies are `fabric`, `click` and `python-dotenv`.
 
 ```
 cd openfreemap
 pip install -e .
 ```
+
+On recent, externally managed Python installations (PEP 668 — e.g. Ubuntu
+24.04 LTS, Debian 12), a plain `pip install` fails with
+`error: externally-managed-environment`. Use **one** of these alternatives:
+
+**a) Install the dependencies via apt (simplest on Ubuntu/Debian):**
+
+```
+sudo apt install python3-fabric python3-click python3-dotenv
+```
+
+Then run `./init-server.py ...` directly with the system Python — no `pip
+install -e .` needed.
+
+**b) Use an isolated virtualenv:**
+
+```
+python3 -m venv .venv          # sudo apt install python3-venv if missing
+source .venv/bin/activate
+pip install -e .
+```
+
+Remember to `source .venv/bin/activate` in each new shell before running
+`./init-server.py`.
+
+**c) Override the guard (not recommended):** `pip install -e . --break-system-packages`.
 
 #### 5. Deploy quick version with `SKIP_PLANET=true`
 
