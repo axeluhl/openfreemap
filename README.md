@@ -12,6 +12,16 @@ We also provide **weekly** full planet downloads both in Btrfs and MBTiles forma
 
 #### Quick introduction and how to guide: [https://openfreemap.org/](https://openfreemap.org/)
 
+## This Fork
+
+The original repository comes with powerful configuration scripts that help setting up a self-hosting environment from a standalone server instance. It makes some assumptions, such as that the host name used to reach the instance with SSH will then also be the domain name under which the `nginx` instance serves tiles and styles. Also, it makes assumptions about the client-side Python setup and the server-side Linux distribution.
+
+This fork enhances the documentation to explain how to deal with different client-side distribution-managed Python environments and adjusts the server-side configuration for Amazon Linux 2023. It does so in two regards:
+- choosing the right packages with the `dnf` package manager
+- assume that `nginx` will serve on HTTP, port 80, with no SSL/TLS certificate management
+
+This assumes that the installation will be used together with an AWS Application Load Balancer (ALB), and one or more such instances then being registered with a target group to which the ALB forwards requests, e.g., based on the `hostname` header field.
+
 ## Goals of this project
 
 The goal of this project is to provide free, production-quality vector-tile hosting using existing tools.
