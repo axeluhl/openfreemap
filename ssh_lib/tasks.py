@@ -215,19 +215,18 @@ def copy_runs_from_host(c, src_host, src_user=None):
         f'scp -rp -o StrictHostKeyChecking=accept-new '
         f'{src_user}@{src_host}:{HTTP_HOST_RUNS}/. {staging}/',
     )
-    # don't copy a nested staging dir onto itself if the source has a leftover
+    # the source may itself contain a leftover staging dir; drop it
     c.sudo(f'rm -rf {staging}/_copy_tmp')
 
     # move each area into place (same filesystem -> instant) and normalise
-    # ownership to root, matching files created by the regular download path
-    sudo_cmd(
-        c,
-        f'for area in {staging}/*/; do '
-        f'  name=$(basename "$area"); '
-        f'  rm -rf "{HTTP_HOST_RUNS}/$name"; '
-        f'  mv "$area" "{HTTP_HOST_RUNS}/$name"; '
-        f'done',
-    )
+    # ownership to root, matching files created by the regular download path.
+    # NOTE: iterate in Python, not a remote shell loop -- sudo_cmd wraps
+    # commands in `bash -c "..."`, so the outer shell would expand $var / $(...)
+    # before the inner bash runs.
+    area_names = c.sudo(f'ls -1 {staging}', hide=True).stdout.split()
+    for name in area_names:
+        c.sudo(f'rm -rf {HTTP_HOST_RUNS}/{name}')
+        c.sudo(f'mv {staging}/{name} {HTTP_HOST_RUNS}/{name}')
     c.sudo(f'chown -R root:root {HTTP_HOST_RUNS}')
     c.sudo(f'rm -rf {staging}')
 
