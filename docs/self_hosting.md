@@ -131,6 +131,41 @@ The `--domain` switch is available on the `http-host-static`, `http-host-autoupd
 commands. Use `http-host-sync --domain ...` to update the `server_name` of an already-deployed host without
 redeploying.
 
+##### Faster provisioning options (AWS / large fleets)
+
+The `http-host-static` and `http-host-autoupdate` commands support a few extra switches that speed up bringing
+up a new host when you already run other hosts or have local NVMe available.
+
+**Local NVMe for `/data/ofm`** — On by default. Before anything is written, the deploy looks for an *unformatted*
+NVMe disk (no filesystem, no partitions, not mounted) that is large enough to hold the uncompressed btrfs image,
+formats it with ext4 and mounts it at `/data/ofm`. This keeps the multi-hundred-GB `tiles.btrfs` on fast, cheap
+local storage. Existing/formatted disks (including the root disk) are never touched, and if no suitable disk is
+found the root disk is used as before.
+
+- `--no-nvme` — disable the NVMe search entirely and use the root disk.
+- `--nvme-min-size-gb N` — minimum disk size to qualify (default `200`, sized for the uncompressed planet image).
+
+Note: instance-store NVMe is *ephemeral* — it is wiped on stop/start. The fstab entry uses `nofail`, so a later
+stop/start (which brings the volume back blank) never blocks boot; `/data/ofm` then falls back to the root disk
+and the next sync re-fetches the data.
+
+**Copy the btrfs runs from an existing host** — Instead of downloading the runs from the web, copy them (for all
+areas) directly from a host you already run, via `scp`. Planet is the large one; the other areas are tiny and
+copied along with it. The subsequent sync finds each `tiles.btrfs` already present and skips its download.
+
+- `--copy-runs-from-host HOST` — copy `/data/ofm/http_host/runs` from this host over `scp`.
+- `--copy-runs-user USER` — SSH user for that host (defaults to the target `--user` / your ssh login user).
+
+The `scp` runs *on the new host* as your login user and authenticates to the source host using your **forwarded
+ssh-agent** (agent forwarding is enabled automatically). So make sure your local `ssh-agent` holds a key that can
+reach the source host (`ssh-add`) before running the deploy. The source host key is auto-accepted
+(`StrictHostKeyChecking=accept-new`).
+
+```
+./init-server.py http-host-static ec2-user@NEWHOST --domain maps.example.com \
+    --copy-runs-from-host 10.0.0.5 --nvme-min-size-gb 200
+```
+
 #### 5. Check
 
 If everything is OK, you'll have some curl lines printed. Run the first one locally and make sure it's showing HTTP/2 200. For example this is an OK response.

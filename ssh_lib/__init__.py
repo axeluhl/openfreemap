@@ -19,7 +19,9 @@ TILE_GEN_BIN = f'{TILE_GEN_DIR}/bin'
 PLANETILER_SRC = f'{TILE_GEN_DIR}/planetiler_src'
 PLANETILER_BIN = f'{TILE_GEN_DIR}/planetiler'
 
-HTTP_HOST_BIN = f'{OFM_DIR}/http_host/bin'
+HTTP_HOST_DIR = f'{OFM_DIR}/http_host'
+HTTP_HOST_BIN = f'{HTTP_HOST_DIR}/bin'
+HTTP_HOST_RUNS = f'{HTTP_HOST_DIR}/runs'
 
 
 # Handling multiple .env files is supported
