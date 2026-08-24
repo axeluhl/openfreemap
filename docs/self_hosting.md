@@ -49,8 +49,10 @@ git clone https://github.com/hyperknot/openfreemap
 
 In the config folder, copy `.env.sample` to `.env` and set the values.
 
-`DOMAIN_DIRECT` - Your subdomain \
-`LETSENCRYPT_EMAIL` - Your email for Let's Encrypt
+`DOMAIN_DIRECT` - Your subdomain
+
+This is the public hostname that nginx serves under (its `server_name`). You can also override it per run
+with the `--domain` switch on the command line (see step 5), which takes precedence over `DOMAIN_DIRECT`.
 
 Set `SKIP_PLANET=true` first.
 
@@ -101,8 +103,33 @@ Remember to `source .venv/bin/activate` in each new shell before running
 Run the actual deploy command and wait a few minutes
 
 ```
+./init-server.py http-host-static HOSTNAME --domain maps.example.com
+```
+
+`HOSTNAME` is the SSH target (the machine to deploy to) and is the only positional argument. The SSH **user** is
+*not* a separate positional argument — provide it either via your `~/.ssh/config`, via the `--user` option, or by
+embedding it in the hostname as `user@host` (Fabric shorthand). Likewise a non-standard SSH port comes from
+`~/.ssh/config` or the `--port` option. You do not need to log in as `root`: the deploy tasks call `sudo`
+themselves, so a normal login user with (passwordless) sudo rights is enough. On an AWS EC2 Amazon Linux instance
+that user is `ec2-user`:
+
+```
+./init-server.py http-host-static ec2-user@HOSTNAME --domain maps.example.com
+# or equivalently
+./init-server.py http-host-static HOSTNAME --user ec2-user --domain maps.example.com
+```
+
+`--domain` is the public hostname that nginx will answer under (its `server_name`); it overrides the
+`DOMAIN_DIRECT` value from your `.env`. If you omit `--domain`, the `DOMAIN_DIRECT` value from `.env` is used
+instead:
+
+```
 ./init-server.py http-host-static HOSTNAME
 ```
+
+The `--domain` switch is available on the `http-host-static`, `http-host-autoupdate` and `http-host-sync`
+commands. Use `http-host-sync --domain ...` to update the `server_name` of an already-deployed host without
+redeploying.
 
 #### 5. Check
 
@@ -127,7 +154,7 @@ x-ofm-debug: latest JSON monaco
 
 #### 6. Deploy and check with `SKIP_PLANET=false`
 
-Update your `.env` file and re-run the same `./init-server.py http-host-static HOSTNAME` as before.
+Update your `.env` file and re-run the same `./init-server.py http-host-static HOSTNAME --domain maps.example.com` as before.
 
 Go for a walk and by the time you come back it should be up and running with the latest planet tiles deployed. Don't worry about the "Download aborted" lines in the meanwhile, it's a bug in CloudFlare.
 
