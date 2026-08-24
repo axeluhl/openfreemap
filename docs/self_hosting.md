@@ -12,11 +12,11 @@ There is a 99.9% chance you only need **http-host**. Tile-gen is slow, needs a h
 
 ### System requirements
 
-**http-host**: 300 GB disk space for hosting a single run. SSD is recommended, but not required.
+**http-host**: 300 GB disk space for hosting a single run. SSD is recommended, but not required. NVMe even better.
 
 **tile-gen**: 500 GB SDD and at least 64 GB ram
 
-**Ubuntu 22** or newer
+**Amazon Linux 2023 (AL2023)** or newer
 
 ### Provider recommendation
 
@@ -36,15 +36,16 @@ If you run it on a non-clean server, please understand that this will modify you
 
 I recommend running things quickly first, with `SKIP_PLANET=true` and then once it works, running it with `SKIP_PLANET=false`.
 
-#### 1. DNS setup
+#### 1. DNS/ALB setup
 
-Set up a server with at least 300 GB SSD space and configure the DNS for the subdomain of your choice.
-For example, make an A record for "maps.example.com" -> 185.199.110.153
+Get your **Route53 --> ALB --> Target Group --> Instance(s)** set-up right. SSL offloading is expected to happen
+at the ALB, ideally using AWS-provided certificates. The instances will handle only HTTP traffic on port 80.
+A good health check seems `/styles/liberty` to see if a JSON comes back with a HTTP 200 status code.
 
 #### 2. Clone and prepare `config` folder
 
 ```
-git clone https://github.com/hyperknot/openfreemap
+git clone https://github.com/axeluhl/openfreemap
 ```
 
 In the config folder, copy `.env.sample` to `.env` and set the values.
