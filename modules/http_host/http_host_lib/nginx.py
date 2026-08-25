@@ -136,6 +136,14 @@ def create_version_location(
     location = /{area}/{version} {{ # no trailing slash
         alias {tilejson_path}; # no trailing slash
 
+        if ($request_method = 'OPTIONS') {{
+            add_header 'Access-Control-Allow-Origin' '*' always;
+            add_header 'Access-Control-Allow-Methods' 'GET, OPTIONS' always;
+            add_header 'Access-Control-Allow-Headers' '*' always;
+            add_header 'Access-Control-Max-Age' 86400 always;
+            return 204;
+        }}
+
         expires 1w;
         default_type application/json;
 
@@ -149,6 +157,15 @@ def create_version_location(
     # specific PBF {area} {version}
     location ^~ /{area}/{version}/ {{ # trailing slash
         alias {mnt_dir}/tiles/; # trailing slash
+
+        if ($request_method = 'OPTIONS') {{
+            add_header 'Access-Control-Allow-Origin' '*' always;
+            add_header 'Access-Control-Allow-Methods' 'GET, OPTIONS' always;
+            add_header 'Access-Control-Allow-Headers' '*' always;
+            add_header 'Access-Control-Max-Age' 86400 always;
+            return 204;
+        }}
+
         try_files $uri @empty_tile;
         add_header Content-Encoding gzip;
 
@@ -200,6 +217,14 @@ def create_latest_locations(*, local: str, domain: str) -> str:
         location = /{area} {{ # no trailing slash
             alias {tilejson_path}; # no trailing slash
 
+            if ($request_method = 'OPTIONS') {{
+                add_header 'Access-Control-Allow-Origin' '*' always;
+                add_header 'Access-Control-Allow-Methods' 'GET, OPTIONS' always;
+                add_header 'Access-Control-Allow-Headers' '*' always;
+                add_header 'Access-Control-Max-Age' 86400 always;
+                return 204;
+            }}
+
             expires 1d;
             default_type application/json;
 
@@ -220,6 +245,15 @@ def create_latest_locations(*, local: str, domain: str) -> str:
             # regex location is unreliable with alias, only root is reliable
 
             root {run_dir}; # no trailing slash
+
+            if ($request_method = 'OPTIONS') {{
+                add_header 'Access-Control-Allow-Origin' '*' always;
+                add_header 'Access-Control-Allow-Methods' 'GET, OPTIONS' always;
+                add_header 'Access-Control-Allow-Headers' '*' always;
+                add_header 'Access-Control-Max-Age' 86400 always;
+                return 204;
+            }}
+
             try_files /tilejson-{local}.json =404;
 
             expires 1w;
@@ -237,6 +271,15 @@ def create_latest_locations(*, local: str, domain: str) -> str:
             # regex location is unreliable with alias, only root is reliable
 
             root {mnt_dir}/tiles/; # trailing slash
+
+            if ($request_method = 'OPTIONS') {{
+                add_header 'Access-Control-Allow-Origin' '*' always;
+                add_header 'Access-Control-Allow-Methods' 'GET, OPTIONS' always;
+                add_header 'Access-Control-Allow-Headers' '*' always;
+                add_header 'Access-Control-Max-Age' 86400 always;
+                return 204;
+            }}
+
             try_files /$2 @empty_tile;
             add_header Content-Encoding gzip;
 
