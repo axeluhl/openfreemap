@@ -167,6 +167,26 @@ reach the source host (`ssh-add`) before running the deploy. The source host key
     --copy-runs-from-host 10.0.0.5 --nvme-min-size-gb 200
 ```
 
+**Local vs. upstream version management (`--local-versions`)** — Each instance records, in its own
+`config.json`, whether it manages the *deployed version* locally or tracks the upstream openfreemap.org pointer:
+
+- **Upstream mode (default):** on every sync the deployed version is fetched from
+  `https://assets.openfreemap.com/deployed_versions/<area>.txt` and the matching btrfs is downloaded. Use this for
+  instances that should follow the official latest release.
+- **Local mode (`local_versions: true`):** the upstream pointer is ignored; the deployed version is taken from the
+  newest run present locally under `runs/<area>/`. This is the correct mode for instances seeded with
+  `--copy-runs-from-host`, whose tiles come from another host rather than a download.
+
+Why this matters: nginx only builds the `latest`/wildcard tile location block for a version that is *both* pointed
+to by `deployed_versions/<area>.txt` *and* actually mounted. If a copied instance's pointer were left tracking an
+upstream version it doesn't hold, that block would be skipped and every non-exact-version request would fall
+through to `deny all` — i.e. **HTTP 403** (a genuinely missing tile inside a valid version returns a `200` empty
+tile instead). Local mode keeps the pointer aligned with the mounted tiles, so this never happens.
+
+The mode is **per instance and sticky**: `--copy-runs-from-host` turns local mode on automatically, and re-running
+`http-host-static` / `http-host-sync` later preserves whatever the instance already had. Override explicitly with
+`--local-versions` / `--no-local-versions` (e.g. to later convert a copied instance to follow upstream).
+
 #### 5. Check
 
 If everything is OK, you'll have some curl lines printed. Run the first one locally and make sure it's showing HTTP/2 200. For example this is an OK response.

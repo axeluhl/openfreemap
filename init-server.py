@@ -67,6 +67,15 @@ def copy_runs_options(func):
         '--copy-runs-user',
         help='SSH user for --copy-runs-from-host (defaults to the target --user / ssh login user)',
     )(func)
+    func = click.option(
+        '--local-versions/--no-local-versions',
+        'local_versions',
+        default=None,
+        help='Manage the deployed version locally (from the newest local run) '
+        'instead of tracking the upstream openfreemap.org pointer. Implied by '
+        '--copy-runs-from-host; use --no-local-versions to override. When '
+        'unset, the instance\'s existing setting is preserved.',
+    )(func)
     return func
 
 
@@ -107,17 +116,23 @@ def http_host_static(
     no_nvme,
     copy_runs_from_host,
     copy_runs_user,
+    local_versions,
     domain,
 ):
     if not noninteractive and not click.confirm(f'Run script on {hostname}?'):
         return
+
+    # --copy-runs-from-host implies local version management, unless the
+    # operator explicitly overrides it with --no-local-versions.
+    if local_versions is None and copy_runs_from_host:
+        local_versions = True
 
     c = get_connection(hostname, user, port)
 
     if not no_nvme:
         mount_nvme_data_volume(c, min_size_gb=nvme_min_size_gb)
 
-    prepare_shared(c, domain=domain)
+    prepare_shared(c, domain=domain, local_versions=local_versions)
     prepare_http_host(c)
 
     if copy_runs_from_host:
@@ -140,10 +155,16 @@ def http_host_autoupdate(
     no_nvme,
     copy_runs_from_host,
     copy_runs_user,
+    local_versions,
     domain,
 ):
     if not noninteractive and not click.confirm(f'Run script on {hostname}?'):
         return
+
+    # --copy-runs-from-host implies local version management, unless the
+    # operator explicitly overrides it with --no-local-versions.
+    if local_versions is None and copy_runs_from_host:
+        local_versions = True
 
     c = get_connection(hostname, user, port)
 
@@ -152,7 +173,7 @@ def http_host_autoupdate(
 
     c.sudo('rm -f /etc/cron.d/ofm_http_host')
 
-    prepare_shared(c, domain=domain)
+    prepare_shared(c, domain=domain, local_versions=local_versions)
     prepare_http_host(c)
 
     if copy_runs_from_host:

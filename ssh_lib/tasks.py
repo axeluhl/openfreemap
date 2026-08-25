@@ -91,7 +91,7 @@ def mount_nvme_data_volume(c, *, min_size_gb=200):
     c.sudo('mount /data/ofm')
 
 
-def prepare_shared(c, domain=None):
+def prepare_shared(c, domain=None, local_versions=None):
     # creates ofm user with uid=2000, disabled password and nopasswd sudo
     add_user(c, 'ofm', uid=2000)
     enable_sudo(c, 'ofm', nopasswd=True)
@@ -104,7 +104,7 @@ def prepare_shared(c, domain=None):
     c.sudo(f'chown ofm:ofm {REMOTE_CONFIG}')
     c.sudo(f'chown ofm:ofm {OFM_DIR}')
 
-    upload_config_json(c, domain=domain)
+    upload_config_json(c, domain=domain, local_versions=local_versions)
 
     prepare_venv(c)
 
@@ -257,11 +257,20 @@ def install_benchmark(c):
     wrk(c)
 
 
-def upload_config_json(c, domain=None):
+def upload_config_json(c, domain=None, local_versions=None):
     # The nginx server_name / public hostname can be passed on the command line
     # (--domain); otherwise it falls back to DOMAIN_DIRECT in config/.env.
     domain_direct = (domain or dotenv_val('DOMAIN_DIRECT')).lower()
     skip_planet = dotenv_val('SKIP_PLANET').lower() == 'true'
+
+    # local_versions is a per-instance mode: version management is local (the
+    # runs were seeded from another host via --copy-runs-from-host), so the
+    # deployed pointer is taken from the local runs instead of upstream. It is
+    # tri-state: True/False set it explicitly; None preserves whatever the
+    # instance's existing config.json already has (sticky across re-runs),
+    # defaulting to False for a brand-new instance.
+    if local_versions is None:
+        local_versions = read_remote_local_versions(c)
 
     # TLS is terminated upstream (e.g. an AWS ALB), so no certificate settings
     # are needed here. domain_direct is the public hostname used in server_name
@@ -276,6 +285,7 @@ def upload_config_json(c, domain=None):
         # kept as an empty passthrough for the optional loadbalancer/tile_gen modules
         'domain_roundrobin': dotenv_val('DOMAIN_ROUNDROBIN').lower(),
         'skip_planet': skip_planet,
+        'local_versions': bool(local_versions),
         'http_host_list': http_host_list,
         'telegram_token': dotenv_val('TELEGRAM_TOKEN'),
         'telegram_chat_id': dotenv_val('TELEGRAM_CHAT_ID'),
@@ -284,6 +294,21 @@ def upload_config_json(c, domain=None):
     config_str = json.dumps(config, indent=2, ensure_ascii=False)
     print(config_str)
     put_str(c, f'{REMOTE_CONFIG}/config.json', config_str)
+
+
+def read_remote_local_versions(c) -> bool:
+    """
+    Read the local_versions flag from the instance's existing config.json, if
+    any, so re-running init/sync preserves the per-instance mode. Defaults to
+    False when there is no config yet or it can't be parsed.
+    """
+    result = c.sudo(f'cat {REMOTE_CONFIG}/config.json', hide=True, warn=True)
+    if not result.ok:
+        return False
+    try:
+        return bool(json.loads(result.stdout).get('local_versions', False))
+    except Exception:
+        return False
 
 
 def setup_loadbalancer(c):
