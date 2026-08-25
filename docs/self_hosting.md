@@ -22,6 +22,8 @@ There is a 99.9% chance you only need **http-host**. Tile-gen is slow, needs a h
 
 One amazing deal, which is tested and known to work well for http-host is the €4.5 / month [Contabo Storage VPS](https://contabo.com/en/storage-vps/)
 
+> **Background read:** if you self-host on AWS, see [AWS EC2 instance performance for http-host](benchmark/ec2_instance_performance.md) — load-testing shows tile serving is network-egress-bound (not CPU-bound), so a cheap `t4g.small` outperforms a much pricier `c6gd.xlarge`.
+
 ---
 
 ### Warning
