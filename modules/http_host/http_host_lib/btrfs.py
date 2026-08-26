@@ -66,16 +66,16 @@ def download_and_extract_btrfs(area: str, version: str) -> bool:
 
     url = f'https://btrfs.openfreemap.com/areas/{area}/{version}/tiles.btrfs.gz'
 
-    # check disk space
-    disk_free = shutil.disk_usage(temp_dir).free
-    file_size = get_remote_file_size(url)
-    if not file_size:
+    # No disk-space pre-check: the only figure available here is the *compressed*
+    # .gz size (its Content-Length; gzip's ISIZE trailer wraps at 4 GiB so the
+    # uncompressed size can't be read from it either). A heuristic like
+    # compressed * N can't bound the real footprint -- these images expand at a
+    # ratio that swings widely (planet ~90 GB .gz -> ~170 GB btrfs), so any
+    # margin safe enough to trust would forbid economic provisioning (~200 GB
+    # partition). We still HEAD the URL so a missing/!bad remote fails cleanly;
+    # if the disk is genuinely too small the download/unpigz below fails loudly.
+    if not get_remote_file_size(url):
         print(f'  cannot get remote file size for {url}')
-        return False
-
-    needed_space = file_size * 3
-    if disk_free < needed_space:
-        print(f'  not enough disk space. Needed: {needed_space}, free space: {disk_free}')
         return False
 
     target_file = temp_dir / 'tiles.btrfs.gz'
