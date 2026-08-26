@@ -297,5 +297,28 @@ def create_latest_locations(*, local: str, domain: str) -> str:
         }}
         """
 
+        # health probe {area}
+        # A GET to /healthz/{area} returns 204 (empty body) iff the btrfs image
+        # for this run is mounted, and 503 otherwise. The discriminator is the
+        # tiles/ directory: the mountpoint dir /mnt/ofm/{area}-{version} always
+        # exists, but tiles/ only appears when the image is mounted. The -d test
+        # stat()s the dir (no read, empty body either way); this leaves the real
+        # /tiles/ tile-serving path untouched, and gives the ALB a truthful
+        # signal instead of the masked 200 that @empty_tile returns for real
+        # tile requests once a mount drops. `if` here only guards a `return`,
+        # which is a sanctioned use of if in a location context.
+        location_str += f"""
+
+        # health probe {area}
+        location = /healthz/{area} {{
+            access_log off;
+            if (!-d {mnt_dir}/tiles) {{
+                return 503;
+            }}
+            add_header x-ofm-debug 'healthz {area}' always;
+            return 204;
+        }}
+        """
+
     return location_str
 
