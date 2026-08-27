@@ -38,11 +38,20 @@ def get_remote_file_size(url: str) -> int | None:
     return int(size) if size else None
 
 
-def download_file_aria2(url: str, local_file: Path):
+def download_file_aria2(url: str, local_file: Path, resume: bool = False):
     print(f'  downloading {url} into {local_file}')
-    local_file.unlink(missing_ok=True)
+
+    # When resuming, keep any partial file (and aria2c's .aria2 control file)
+    # so the downloader continues where a previous, interrupted run stopped.
+    if not resume:
+        local_file.unlink(missing_ok=True)
 
     if shutil.which('aria2c'):
+        # aria2c does not resume or retry mid-stream drops on its own. When
+        # resuming, enable --continue and give it the same in-stream resilience
+        # the wget fallback already has (infinite retries, wait between them, a
+        # read timeout so a stalled connection aborts and retries).
+        resume_args = ['--continue=true', '--max-tries=0', '--retry-wait=10', '--timeout=60'] if resume else []
         subprocess.run(
             [
                 'aria2c',
@@ -50,6 +59,7 @@ def download_file_aria2(url: str, local_file: Path):
                 '--max-connection-per-server=8',
                 '--file-allocation=none',
                 '--min-split-size=1M',
+                *resume_args,
                 '-d',
                 local_file.parent,
                 '-o',

@@ -61,8 +61,26 @@ def download_and_extract_btrfs(area: str, version: str) -> bool:
         return False
 
     temp_dir = config.runs_dir / '_tmp'
-    shutil.rmtree(temp_dir, ignore_errors=True)
-    temp_dir.mkdir(parents=True)
+    target_file = temp_dir / 'tiles.btrfs.gz'
+
+    # Sidecar marker recording which (area, version) the partial in _tmp belongs
+    # to. _tmp is shared and reused across all sync calls (monaco/planet x
+    # latest/deployed), and "latest" can roll to a newer version between runs, so
+    # we resume the partial only when it matches exactly what we are fetching now.
+    # Otherwise the partial is stale and _tmp is wiped for a fresh download.
+    marker_file = temp_dir / 'partial.txt'
+    marker = f'{area}/{version}'
+    resume = (
+        target_file.exists()
+        and marker_file.exists()
+        and marker_file.read_text().strip() == marker
+    )
+    if resume:
+        print('  resuming partial download')
+    else:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        temp_dir.mkdir(parents=True)
+        marker_file.write_text(marker)
 
     url = f'https://btrfs.openfreemap.com/areas/{area}/{version}/tiles.btrfs.gz'
 
@@ -78,8 +96,7 @@ def download_and_extract_btrfs(area: str, version: str) -> bool:
         print(f'  cannot get remote file size for {url}')
         return False
 
-    target_file = temp_dir / 'tiles.btrfs.gz'
-    download_file_aria2(url, target_file)
+    download_file_aria2(url, target_file, resume=True)
 
     print('  uncompressing...')
     subprocess.run(['unpigz', temp_dir / 'tiles.btrfs.gz'], check=True)
