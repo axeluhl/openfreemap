@@ -139,18 +139,22 @@ redeploying.
 The `http-host-static` and `http-host-autoupdate` commands support a few extra switches that speed up bringing
 up a new host when you already run other hosts or have local NVMe available.
 
-**Local NVMe for `/data/ofm`** — On by default. Before anything is written, the deploy looks for an *unformatted*
-NVMe disk (no filesystem, no partitions, not mounted) that is large enough to hold the uncompressed btrfs image,
-formats it with ext4 and mounts it at `/data/ofm`. This keeps the multi-hundred-GB `tiles.btrfs` on fast, cheap
-local storage. Existing/formatted disks (including the root disk) are never touched, and if no suitable disk is
-found the root disk is used as before.
+**Local NVMe for the btrfs download** — On by default. Before the download runs, the deploy looks for an
+*unformatted* NVMe disk (no filesystem, no partitions, not mounted) large enough to hold the ~90 GB **gzipped**
+btrfs download, partitions it (GPT, one partition), formats that partition with ext4 and mounts it at the download
+staging dir (`/data/ofm/http_host/runs/_tmp`). The `.gz` download then lands on fast, cheap local NVMe and is
+decompressed **straight onto the runs volume**, so the extracted multi-hundred-GB `tiles.btrfs` stays on the
+"real" root/EBS volume — where an AMI created off the instance will capture it — while only the throwaway download
+bytes live on the NVMe. Since instance-store NVMe is never part of an AMI, the download data is automatically
+excluded from any image. Existing/formatted disks (including the root disk) are never touched, and if no suitable
+disk is found the download goes onto the runs volume as before.
 
-- `--no-nvme` — disable the NVMe search entirely and use the root disk.
-- `--nvme-min-size-gb N` — minimum disk size to qualify (default `200`, sized for the uncompressed planet image).
+- `--no-nvme` — disable the NVMe search entirely and download onto the runs volume.
+- `--nvme-min-size-gb N` — minimum disk size to qualify (default `100`, sized for the ~90 GB gzipped planet download).
 
 Note: instance-store NVMe is *ephemeral* — it is wiped on stop/start. The fstab entry uses `nofail`, so a later
-stop/start (which brings the volume back blank) never blocks boot; `/data/ofm` then falls back to the root disk
-and the next sync re-fetches the data.
+stop/start (which brings the volume back blank) never blocks boot; the download then simply falls back to the runs
+volume. The extracted `tiles.btrfs` already lives on EBS, so it survives the stop/start regardless.
 
 **Copy the btrfs runs from an existing host** — Instead of downloading the runs from the web, copy them (for all
 areas) directly from a host you already run, via `scp`. Planet is the large one; the other areas are tiny and
@@ -166,7 +170,7 @@ reach the source host (`ssh-add`) before running the deploy. The source host key
 
 ```
 ./init-server.py http-host-static ec2-user@NEWHOST --domain maps.example.com \
-    --copy-runs-from-host 10.0.0.5 --nvme-min-size-gb 200
+    --copy-runs-from-host 10.0.0.5 --nvme-min-size-gb 100
 ```
 
 **Local vs. upstream version management (`--local-versions`)** — Each instance records, in its own

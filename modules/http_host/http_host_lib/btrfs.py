@@ -78,8 +78,7 @@ def download_and_extract_btrfs(area: str, version: str) -> bool:
     if resume:
         print('  resuming partial download')
     else:
-        shutil.rmtree(temp_dir, ignore_errors=True)
-        temp_dir.mkdir(parents=True)
+        reset_download_dir(temp_dir)
         marker_file.write_text(marker)
 
     url = f'https://btrfs.openfreemap.com/areas/{area}/{version}/tiles.btrfs.gz'
@@ -99,13 +98,40 @@ def download_and_extract_btrfs(area: str, version: str) -> bool:
     download_file_aria2(url, target_file, resume=True)
 
     print('  uncompressing...')
-    subprocess.run(['unpigz', temp_dir / 'tiles.btrfs.gz'], check=True)
-    btrfs_src = temp_dir / 'tiles.btrfs'
-
     shutil.rmtree(version_dir, ignore_errors=True)
     version_dir.mkdir(parents=True)
 
-    btrfs_src.rename(btrfs_file)
+    # Decompress straight onto the runs (EBS) volume. temp_dir may be a separate
+    # ephemeral NVMe mounted at _tmp (see mount_nvme_download_volume in
+    # ssh_lib/tasks.py), so stream via `unpigz -c` to the final volume instead
+    # of unpigz-in-place + rename: a rename across filesystems fails with EXDEV,
+    # and we want the extracted image on EBS (captured by an AMI) while the
+    # throwaway .gz stays on the ephemeral NVMe. Write to a temp name first, then
+    # rename within the runs volume so a half-written image is never picked up by
+    # the mount step.
+    btrfs_tmp = version_dir / 'tiles.btrfs.tmp'
+    with open(btrfs_tmp, 'wb') as out:
+        subprocess.run(['unpigz', '-c', str(target_file)], stdout=out, check=True)
+    btrfs_tmp.rename(btrfs_file)
 
-    shutil.rmtree(temp_dir)
+    # empty _tmp but keep the directory itself: it may be an NVMe mountpoint
+    reset_download_dir(temp_dir)
     return True
+
+
+def reset_download_dir(temp_dir):
+    """
+    Empty the download staging dir without removing the directory itself.
+
+    _tmp may be the mountpoint of a separate ephemeral NVMe (see
+    mount_nvme_download_volume in ssh_lib/tasks.py); rmtree-ing the directory
+    would fail on the busy mountpoint, so we only clear its contents.
+    """
+    if temp_dir.exists():
+        for child in temp_dir.iterdir():
+            if child.is_dir() and not child.is_symlink():
+                shutil.rmtree(child, ignore_errors=True)
+            else:
+                child.unlink(missing_ok=True)
+    else:
+        temp_dir.mkdir(parents=True, exist_ok=True)

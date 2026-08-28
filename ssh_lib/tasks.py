@@ -23,6 +23,7 @@ from ssh_lib.utils import (
     append_str,
     enable_sudo,
     get_username,
+    pkg_install,
     put,
     put_dir,
     put_str,
@@ -31,24 +32,34 @@ from ssh_lib.utils import (
 )
 
 
-def mount_nvme_data_volume(c, *, min_size_gb=200):
+def mount_nvme_download_volume(c, *, min_size_gb=100):
     """
-    If an unformatted NVMe disk large enough to hold the uncompressed btrfs
-    image is present, format it (ext4) and mount it at /data/ofm, so the
-    (multi-hundred-GB) tiles.btrfs lives on fast local NVMe instead of the root
-    disk.
+    Put the (throwaway) btrfs *download* on a local ephemeral NVMe, if one is
+    available, while keeping the extracted image on the root/EBS volume.
+
+    If an unformatted NVMe disk large enough to hold the ~90 GB gzipped planet
+    btrfs download is present, it is partitioned (GPT, one partition),
+    formatted (ext4) and mounted at the download staging dir (<runs>/_tmp). The
+    download then lands on fast, ephemeral local NVMe and is decompressed
+    straight onto the runs volume (see download_and_extract_btrfs in
+    modules/http_host), so the extracted tiles.btrfs -- the thing an AMI should
+    capture -- stays on EBS while only the disposable .gz bytes live on the
+    NVMe. Instance-store NVMe is never part of an AMI, so the download data is
+    automatically excluded from any image created off the instance.
 
     Only *unformatted* disks are considered: no filesystem, no partitions, not
-    mounted. Existing data is therefore never touched. This matches both an
-    extra unformatted EBS volume and instance-store NVMe.
+    mounted. Existing data is therefore never touched. This matches instance-
+    store NVMe (and any extra blank NVMe-attached volume).
 
     Instance-store NVMe is ephemeral (wiped on stop/start), so the fstab entry
-    uses `nofail` to never block boot if the volume comes back blank or is gone.
+    uses `nofail` to never block boot if the volume comes back blank or is gone;
+    the download then simply falls back to the runs (EBS) volume.
     """
-    print('Looking for an unformatted NVMe volume for /data/ofm')
+    download_tmp = f'{HTTP_HOST_RUNS}/_tmp'
+    print(f'Looking for an unformatted NVMe volume for the btrfs download ({download_tmp})')
 
-    if c.sudo('mountpoint -q /data/ofm', warn=True, hide=True).ok:
-        print('  /data/ofm is already a mount point, skipping')
+    if c.sudo(f'mountpoint -q {download_tmp}', warn=True, hide=True).ok:
+        print(f'  {download_tmp} is already a mount point, skipping')
         return
 
     out = c.run('lsblk -b -J -o NAME,TYPE,SIZE,FSTYPE,MOUNTPOINT', hide=True).stdout
@@ -70,25 +81,39 @@ def mount_nvme_data_volume(c, *, min_size_gb=200):
         candidates.append(dev)
 
     if not candidates:
-        print(f'  no unformatted NVMe disk >= {min_size_gb} GB found, using root disk')
+        print(
+            f'  no unformatted NVMe disk >= {min_size_gb} GB found, '
+            f'downloading onto the runs volume'
+        )
         return
 
     # pick the largest suitable disk
     dev = max(candidates, key=lambda d: int(d['size']))
     devpath = f"/dev/{dev['name']}"
-    print(f"  using {devpath} ({int(dev['size']) / 1000**3:.0f} GB) for /data/ofm")
+    print(f"  using {devpath} ({int(dev['size']) / 1000**3:.0f} GB) for the btrfs download")
 
-    # -m 0: don't reserve 5% for root, we only store the big image file here
-    c.sudo(f'mkfs.ext4 -F -m 0 {devpath}')
+    # parted is not guaranteed on a bare image, and this runs before pkg_base
+    pkg_install(c, 'parted', warn=True)
 
-    uuid = c.sudo(f'blkid -s UUID -o value {devpath}', hide=True).stdout.strip()
+    # GPT label + a single partition spanning the whole disk
+    c.sudo(f'parted -s {devpath} mklabel gpt')
+    c.sudo(f'parted -s -a optimal {devpath} mkpart primary ext4 0% 100%')
+    c.sudo('udevadm settle', warn=True)
 
-    c.sudo('mkdir -p /data/ofm')
+    # NVMe partition node: nvme1n1 -> nvme1n1p1
+    partpath = f'{devpath}p1'
 
-    fstab_line = f'UUID={uuid} /data/ofm ext4 defaults,nofail 0 2'
+    # -m 0: don't reserve 5% for root, we only store the throwaway .gz here
+    c.sudo(f'mkfs.ext4 -F -m 0 {partpath}')
+
+    uuid = c.sudo(f'blkid -s UUID -o value {partpath}', hide=True).stdout.strip()
+
+    c.sudo(f'mkdir -p {download_tmp}')
+
+    fstab_line = f'UUID={uuid} {download_tmp} ext4 defaults,nofail 0 2'
     append_str(c, '/etc/fstab', fstab_line, check_duplicate=True)
 
-    c.sudo('mount /data/ofm')
+    c.sudo(f'mount {download_tmp}')
 
 
 def prepare_shared(c, domain=None, local_versions=None):

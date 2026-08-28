@@ -6,7 +6,7 @@ from fabric import Config, Connection
 from ssh_lib import MODULES_DIR, dotenv_val
 from ssh_lib.tasks import (
     copy_runs_from_host as copy_runs_from_host_task,
-    mount_nvme_data_volume,
+    mount_nvme_download_volume,
     prepare_http_host,
     prepare_shared,
     prepare_tile_gen,
@@ -80,19 +80,20 @@ def copy_runs_options(func):
 
 
 def nvme_options(func):
-    """Options for storing /data/ofm on a local NVMe volume."""
+    """Options for staging the btrfs download on a local ephemeral NVMe volume."""
     func = click.option(
         '--no-nvme',
         is_flag=True,
-        help='Do not look for an unformatted NVMe volume to mount at /data/ofm',
+        help='Do not look for an unformatted NVMe volume to stage the btrfs '
+        'download on (the runs volume is then used for the download too)',
     )(func)
     func = click.option(
         '--nvme-min-size-gb',
         type=int,
-        default=200,
+        default=100,
         show_default=True,
-        help='Minimum size for an NVMe volume to be used for /data/ofm '
-        '(must hold the uncompressed btrfs image)',
+        help='Minimum size for an NVMe volume to stage the btrfs download '
+        '(must hold the ~90 GB gzipped download)',
     )(func)
     return func
 
@@ -130,7 +131,7 @@ def http_host_static(
     c = get_connection(hostname, user, port)
 
     if not no_nvme:
-        mount_nvme_data_volume(c, min_size_gb=nvme_min_size_gb)
+        mount_nvme_download_volume(c, min_size_gb=nvme_min_size_gb)
 
     prepare_shared(c, domain=domain, local_versions=local_versions)
     prepare_http_host(c)
@@ -169,7 +170,7 @@ def http_host_autoupdate(
     c = get_connection(hostname, user, port)
 
     if not no_nvme:
-        mount_nvme_data_volume(c, min_size_gb=nvme_min_size_gb)
+        mount_nvme_download_volume(c, min_size_gb=nvme_min_size_gb)
 
     c.sudo('rm -f /etc/cron.d/ofm_http_host')
 
