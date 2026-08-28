@@ -193,6 +193,75 @@ The mode is **per instance and sticky**: `--copy-runs-from-host` turns local mod
 `http-host-static` / `http-host-sync` later preserves whatever the instance already had. Override explicitly with
 `--local-versions` / `--no-local-versions` (e.g. to later convert a copied instance to follow upstream).
 
+##### Baking a golden AMI for an Auto Scaling Group behind an ALB
+
+This is the recommended way to run a fleet: build the tiles **once** on a big Graviton box with local NVMe, snapshot
+its root volume into an AMI, then boot cheap `t4g.small` instances from that AMI. Each instance comes up already
+holding the planet tiles on its own root disk — no per-instance 90 GB download — so it can serve within seconds of
+boot and slot straight into an ALB target group managed by an Auto Scaling Group.
+
+The whole architecture stays **arm64**: the bake instance is Graviton, so the AMI is arm64, so it runs on `t4g.small`.
+Do not bake on an x86 instance.
+
+**1. Launch the bake instance.** From a clean **Amazon Linux 2023 (arm64)** image:
+
+- Instance type **`m6gd.large`** (2 vCPU, 8 GB RAM, 1×118 GB instance-store NVMe).
+- A single **200 GB gp3 root** EBS volume — same size the `t4g.small` fleet will run, so the AMI is sized right.
+  During the bake, temporarily raise the root volume's gp3 throughput (e.g. to 500–1000 MB/s) so the ~170 GB
+  decompress-to-EBS write is fast; runtime reads on `t4g.small` are unaffected by that setting.
+- Security group: inbound SSH (22) from your workstation, and outbound HTTPS (443) so it can download the tiles.
+- The 118 GB NVMe is left **unformatted** — the deploy detects it and uses it to stage the download (see *Local NVMe
+  for the btrfs download* above). It is instance-store, so it is **never captured in the AMI**; only the extracted
+  `tiles.btrfs` on the root/EBS volume is.
+
+**2. Run the deploy** from your workstation (with this repo and a filled-in `config/.env`, `SKIP_PLANET=false`):
+
+```
+./init-server.py http-host-static ec2-user@<IP-ADDRESS> --domain maps.example.com
+```
+
+Then wait. The NVMe is partitioned/formatted/mounted at `runs/_tmp`, the ~90 GB `.gz` downloads onto it and is
+decompressed straight onto the 200 GB root volume. On `m6gd.large` this is the long step (download + `unpigz`); the
+"Download aborted" lines from CloudFlare in the meantime are harmless.
+
+Use `http-host-static` (not `http-host-autoupdate`): a golden AMI should serve a **fixed, immutable** version. You do
+not want each auto-scaled instance re-downloading tiles or drifting to a different version at boot. (If you ever do
+want the fleet to self-update, that is a different design — bake with `http-host-autoupdate` and accept that each
+instance pulls new tiles on its own schedule.)
+
+**3. Verify on the box** before snapshotting:
+
+```
+curl -sI http://localhost/monaco | sort            # expect HTTP/1.1 200
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost/healthz/planet   # expect 204
+```
+
+`/healthz/<area>` returns **204** when that area's btrfs is mounted and **503** otherwise — this is the endpoint the
+ALB health check should target (see step 5).
+
+**4. Create the AMI.** Optionally stop the instance first for a fully consistent snapshot, then
+*Actions → Image and templates → Create image* (or `aws ec2 create-image`). The AMI captures only the root EBS
+volume; the ephemeral NVMe is excluded automatically, so the throwaway download bytes never end up in the image.
+
+Optional tidy-up before imaging: the deploy left an fstab entry for the NVMe download volume
+(`UUID=… /data/ofm/http_host/runs/_tmp ext4 defaults,nofail 0 2`). It is harmless on the fleet — `nofail` means a
+`t4g.small` with no such NVMe boots fine and the tiles still mount from the root volume — but you may remove that one
+line from `/etc/fstab` before baking to keep the image clean.
+
+**5. Wire up the ALB + Auto Scaling Group.** Boot `t4g.small` instances from the AMI:
+
+- **Launch template:** the baked AMI, instance type `t4g.small`, a security group allowing inbound **80** from the
+  ALB's security group.
+- **Target group:** protocol HTTP, port 80. Health check path **`/healthz/planet`** (or `/healthz/monaco` if you only
+  serve monaco), with **success codes set to `204`** — the default `200` will mark healthy hosts as unhealthy.
+- **Auto Scaling Group:** attach it to that target group. New instances come up already holding the tiles, pass the
+  `/healthz` check within seconds, and start receiving traffic. TLS is terminated at the ALB, matching this repo's
+  "no local certificates" assumption (the `--domain` you baked in is used only for `server_name` and the generated
+  TileJSON/style URLs).
+
+Because every instance is identical and immutable, scaling out is instant and there is no shared state to coordinate.
+To ship a new planet version, bake a fresh AMI and roll the launch template / ASG to it (e.g. an instance refresh).
+
 #### 5. Check
 
 If everything is OK, you'll have some curl lines printed. Run the first one locally and make sure it's showing HTTP/2 200. For example this is an OK response.
