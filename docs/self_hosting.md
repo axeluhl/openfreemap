@@ -293,8 +293,62 @@ If your server doesn't have an SSD, the download + uncompressing process can tak
 
 ---
 
-#### Deploy tile-gen server (optional)
+#### Restricting access with short-lived tokens (optional)
 
+By default every location is public. If you serve tiles to a single browser application and want to
+keep casual scrapers out **without breaking caching**, you can require a short-lived, signed access
+token on the OFM data locations. The token is validated by nginx's built-in
+[`secure_link`](https://nginx.org/en/docs/http/ngx_http_secure_link_module.html) module (an MD5 keyed
+hash), and — crucially — it travels in **request headers**, not in the URL, so tile URLs stay
+byte-identical and fully cacheable by browsers, ALBs and CDNs.
+
+Enable it by adding a `tile_auth_secrets` object to `config.json`, mapping a short key id (`kid`) to a
+secret:
+
+```json
+{
+    "domain_direct": "maptiles.example.com",
+    "tile_auth_secrets": {
+        "k1": "a-long-random-secret",
+        "k2": "the-next-random-secret"
+    }
+}
+```
+
+On the next `http-host-static` / `http-host-sync` run this makes `write_nginx_config()`:
+
+- write an http-level `map $http_x_ofm_kid $ofm_secret { ... }` to
+  `/data/nginx/config/ofm_secure_link.conf`, selecting the signing secret from the client's
+  `X-OFM-Kid` header;
+- emit the server-level directives
+  `secure_link $http_x_ofm_md5,$http_x_ofm_expires;` and
+  `secure_link_md5 "$secure_link_expires $ofm_secret";`; and
+- add, to every OFM data location (area JSON/tilejson, PBF tiles, wildcard, `/styles/`, `/fonts/`,
+  `/sprites/`, `/natural_earth/`), a guard that returns **401** unless `$secure_link` is `1`
+  (`""` = missing/malformed token, `"0"` = bad or expired). `@empty_tile`, `/healthz/{area}`,
+  `location = /` and OPTIONS preflights are intentionally left open.
+
+The client must send three request headers with every tile-server request:
+
+| Header         | Value                                                                              |
+|----------------|------------------------------------------------------------------------------------|
+| `X-OFM-Md5`     | `base64url_nopad( md5( "<expires> <secret>" ) )` (no padding, `+/`→`-_`)           |
+| `X-OFM-Expires` | token expiry as seconds since the epoch (decimal)                                   |
+| `X-OFM-Kid`     | the key id whose secret produced the signature (e.g. `k1`)                          |
+
+The signed string is exactly `"<expires> <secret>"` — the decimal expiry, a single space, then the
+secret — matching `secure_link_md5 "$secure_link_expires $ofm_secret"`. In shell this is
+`printf '%s %s' "$EXPIRES" "$SECRET" | openssl md5 -binary | openssl base64 | tr '+/' '-_' | tr -d '='`.
+
+The 401 responses carry `Access-Control-Allow-Origin: *` so a browser on a *different* origin than the
+tile server (e.g. app on `www.example.com`, tiles on `maptiles.example.com`) can read the status and
+refresh its token rather than seeing an opaque CORS error.
+
+**Rotation** is zero-downtime: add a new `kid` (e.g. `k3`), start signing with it, and keep the old
+ids listed until every token signed with them has expired, then remove them. Remove the whole
+`tile_auth_secrets` object to return to fully public serving.
+
+#### Deploy tile-gen server (optional)
 If you have a really beefy machine (see above) and you really want to generate tiles yourself, you can run `./init-server.py tile-gen HOSTNAME`.
 
 Trigger a run manually, by running
