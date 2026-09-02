@@ -1,4 +1,5 @@
 import json
+import re
 import sys
 
 from ssh_lib import (
@@ -282,6 +283,48 @@ def install_benchmark(c):
     wrk(c)
 
 
+def parse_tile_auth_secrets(raw):
+    """Parse the TILE_AUTH_SECRETS .env value into a {kid: secret} dict.
+
+    The value is a comma-separated list of ``kid:secret`` pairs, e.g.
+    ``k1:AbC-123_xyz,k2:Def-456_uvw``. Because the comma separates entries and the
+    (first) colon separates a kid from its secret, both kids and secrets are restricted
+    to the URL-safe base64url alphabet ``[A-Za-z0-9_-]`` -- this structurally forbids
+    commas, colons, spaces and quotes inside a secret, so no escaping is needed. Generate
+    secrets accordingly, e.g. ``openssl rand -base64 48 | tr '+/' '-_' | tr -d '='``.
+
+    The same format and constraint are consumed unchanged on the application side
+    (git-sail system property ``map.provider.tileserver.auth.secrets``), so the two stay
+    in lock-step. An empty/blank value disables tile-server authentication (empty dict);
+    any malformed entry aborts the deploy with a clear message rather than silently
+    shipping a broken map.
+    """
+    token_re = re.compile(r'^[A-Za-z0-9_-]+$')
+    result = {}
+    if raw.strip():
+        for entry in raw.split(','):
+            entry = entry.strip()
+            colon_index = entry.find(':')
+            if colon_index <= 0 or colon_index >= len(entry) - 1:
+                sys.exit(
+                    f'TILE_AUTH_SECRETS entry {entry!r} is malformed; expected kid:secret '
+                    f'(comma-separated), with kid and secret both matching [A-Za-z0-9_-]'
+                )
+            kid = entry[:colon_index]
+            secret = entry[colon_index + 1:]
+            if not token_re.match(kid) or not token_re.match(secret):
+                sys.exit(
+                    f'TILE_AUTH_SECRETS entry {entry!r} has an invalid kid or secret; both '
+                    f'must be non-empty and match [A-Za-z0-9_-] (no commas, colons, spaces '
+                    f'or quotes). Generate secrets e.g. with '
+                    f"openssl rand -base64 48 | tr '+/' '-_' | tr -d '='"
+                )
+            if kid in result:
+                sys.exit(f'TILE_AUTH_SECRETS contains duplicate kid {kid!r}')
+            result[kid] = secret
+    return result
+
+
 def upload_config_json(c, domain=None, local_versions=None):
     # The nginx server_name / public hostname can be passed on the command line
     # (--domain); otherwise it falls back to DOMAIN_DIRECT in config/.env.
@@ -305,6 +348,12 @@ def upload_config_json(c, domain=None, local_versions=None):
 
     http_host_list = [h.strip() for h in dotenv_val('HTTP_HOST_LIST').split(',') if h.strip()]
 
+    # Optional short-lived-token auth for the tile server (see docs/self_hosting.md). The
+    # secrets are declared in .env (TILE_AUTH_SECRETS) so they are re-applied on every
+    # deploy; this is the single source of truth. An empty value omits the key entirely,
+    # leaving the tile server fully public (unchanged behaviour).
+    tile_auth_secrets = parse_tile_auth_secrets(dotenv_val('TILE_AUTH_SECRETS'))
+
     config = {
         'domain_direct': domain_direct,
         # kept as an empty passthrough for the optional loadbalancer/tile_gen modules
@@ -315,9 +364,16 @@ def upload_config_json(c, domain=None, local_versions=None):
         'telegram_token': dotenv_val('TELEGRAM_TOKEN'),
         'telegram_chat_id': dotenv_val('TELEGRAM_CHAT_ID'),
     }
+    if tile_auth_secrets:
+        config['tile_auth_secrets'] = tile_auth_secrets
 
     config_str = json.dumps(config, indent=2, ensure_ascii=False)
-    print(config_str)
+    # Print a redacted copy so the operator sees what is being written without leaking the
+    # tile-auth secrets into the terminal/log; the real secrets still go to the host.
+    printed_config = dict(config)
+    if tile_auth_secrets:
+        printed_config['tile_auth_secrets'] = {kid: '***' for kid in tile_auth_secrets}
+    print(json.dumps(printed_config, indent=2, ensure_ascii=False))
     put_str(c, f'{REMOTE_CONFIG}/config.json', config_str)
 
 

@@ -1,3 +1,4 @@
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -6,18 +7,41 @@ from http_host_lib.config import config
 from http_host_lib.utils import python_venv_executable
 
 
+# kids and secrets are restricted to the URL-safe base64url alphabet. This structurally
+# forbids commas, colons, spaces and quotes inside a secret (so the kid:secret,... form the
+# operator writes in .env needs no escaping) and keeps every secret safe to embed verbatim
+# in the generated nginx `map` (whose entries are quoted strings) and in the signed
+# `"<expires> <secret>"` string. Must match the same constraint on the git-sail side.
+_TILE_AUTH_TOKEN_RE = re.compile(r'^[A-Za-z0-9_-]+$')
+
+
 def get_tile_auth_secrets() -> dict:
     """Return the configured tile-server auth secrets as a {kid: secret} dict.
 
     Source is the optional ``tile_auth_secrets`` object in ``config.json`` (e.g.
-    ``{"k1": "secretA", "k2": "secretB"}``). When it is absent or empty, tile-server
+    ``{"k1": "secretA", "k2": "secretB"}``), normally written from the ``TILE_AUTH_SECRETS``
+    ``.env`` value by ``upload_config_json``. When it is absent or empty, tile-server
     authentication is disabled: no ``$ofm_secret`` map is written, no ``secure_link``
     directives are emitted and no location carries the ``secure_link`` guard, so every
     request is served exactly as before. Keeping several ids configured at once enables
     zero-downtime secret rotation (old ids stay valid until their tokens have expired).
+
+    Every kid and secret must match the URL-safe base64url alphabet ``[A-Za-z0-9_-]``;
+    anything else aborts config generation rather than emitting a broken nginx ``map``.
     """
     raw = config.ofm_config.get('tile_auth_secrets') or {}
-    return {str(kid): str(secret) for kid, secret in raw.items()}
+    result = {}
+    for kid, secret in raw.items():
+        kid = str(kid)
+        secret = str(secret)
+        if not _TILE_AUTH_TOKEN_RE.match(kid) or not _TILE_AUTH_TOKEN_RE.match(secret):
+            sys.exit(
+                f'tile_auth_secrets entry for kid {kid!r} is invalid; kid and secret must '
+                f'both be non-empty and match [A-Za-z0-9_-] (no commas, colons, spaces or '
+                f'quotes)'
+            )
+        result[kid] = secret
+    return result
 
 
 def secure_link_guard() -> str:

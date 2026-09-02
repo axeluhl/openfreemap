@@ -302,18 +302,33 @@ token on the OFM data locations. The token is validated by nginx's built-in
 hash), and — crucially — it travels in **request headers**, not in the URL, so tile URLs stay
 byte-identical and fully cacheable by browsers, ALBs and CDNs.
 
-Enable it by adding a `tile_auth_secrets` object to `config.json`, mapping a short key id (`kid`) to a
-secret:
+Enable it by setting `TILE_AUTH_SECRETS` in your `config/.env` **before deploying** — a
+comma-separated list of `kid:secret` pairs, mapping a short key id (`kid`) to a secret:
 
-```json
-{
-    "domain_direct": "maptiles.example.com",
-    "tile_auth_secrets": {
-        "k1": "a-long-random-secret",
-        "k2": "the-next-random-secret"
-    }
-}
 ```
+TILE_AUTH_SECRETS=k1:AbC-123_xyz,k2:Def-456_uvw
+```
+
+> **Do not hand-edit `config.json` on the host.** `/data/ofm/config/config.json` is
+> regenerated from `.env` by `upload_config_json()` on every `http-host-static` run (and on
+> any `http-host-sync --domain` run), so a `tile_auth_secrets` object added there by hand is
+> overwritten. `.env` is the single source of truth; the deploy writes the corresponding
+> `tile_auth_secrets` object into `config.json` for you.
+
+**Secret format (hard rule, no escaping).** The comma separates entries and the first colon
+separates a kid from its secret, so **both kids and secrets must match the URL-safe base64url
+alphabet `[A-Za-z0-9_-]`** — no commas, colons, spaces or quotes inside a secret. A comma in a
+secret would be parsed as an entry boundary; there is deliberately no escaping mechanism.
+Generate secrets accordingly, e.g.:
+
+```
+openssl rand -base64 48 | tr '+/' '-_' | tr -d '='
+```
+
+The **same** `kid:secret,…` string is configured verbatim on the application side (git-sail
+system property `map.provider.tileserver.auth.secrets`), so both ends share one secret set and
+the same alphabet constraint. A malformed value aborts the deploy with a clear message rather
+than shipping a broken map.
 
 On the next `http-host-static` / `http-host-sync` run this makes `write_nginx_config()`:
 
@@ -344,9 +359,10 @@ The 401 responses carry `Access-Control-Allow-Origin: *` so a browser on a *diff
 tile server (e.g. app on `www.example.com`, tiles on `maptiles.example.com`) can read the status and
 refresh its token rather than seeing an opaque CORS error.
 
-**Rotation** is zero-downtime: add a new `kid` (e.g. `k3`), start signing with it, and keep the old
-ids listed until every token signed with them has expired, then remove them. Remove the whole
-`tile_auth_secrets` object to return to fully public serving.
+**Rotation** is zero-downtime: append a new `kid` (e.g. `k3:...`) to `TILE_AUTH_SECRETS`, redeploy,
+start signing with it on the application side, and keep the old ids listed until every token signed
+with them has expired, then remove them. Clear `TILE_AUTH_SECRETS` (and redeploy) to return to fully
+public serving.
 
 #### Deploy tile-gen server (optional)
 If you have a really beefy machine (see above) and you really want to generate tiles yourself, you can run `./init-server.py tile-gen HOSTNAME`.
