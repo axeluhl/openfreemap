@@ -96,6 +96,53 @@ def _persist_config():
     config_path.write_text(json.dumps(config.ofm_config, indent=2, ensure_ascii=False) + '\n')
 
 
+def _apply_parsed_secrets(secrets: dict):
+    """Store ``secrets`` (a ``{kid: secret}`` dict; empty = public) and regenerate nginx.
+
+    Updates ``config.json`` in place -- setting ``tile_auth_secrets`` when secrets are given,
+    or dropping the key when the dict is empty so the running config matches the "open server"
+    intent -- then calls ``write_nginx_config()``, which rewrites the map/guards and reloads a
+    running nginx gracefully (SIGHUP, existing connections finish on the old workers). Shared by
+    the boot-time user-data path and the live-rotation ``set-tile-auth-secrets`` command.
+    """
+    if secrets:
+        config.ofm_config['tile_auth_secrets'] = secrets
+        _persist_config()
+    elif config.ofm_config.pop('tile_auth_secrets', None) is not None:
+        _persist_config()
+    write_nginx_config()
+
+
+def set_tile_auth_secrets_from_stdin(allow_clear: bool = False):
+    """Read a ``TILE_AUTH_SECRETS`` value from stdin and apply it, then reload nginx.
+
+    Used by the live rotation script (``rotate-tile-auth-secrets.sh``) to rotate the secret on
+    already-running instances without replacing them. The value is read from **stdin** (not a
+    CLI argument) so it never lands on the process list. An empty input is refused unless
+    ``allow_clear`` is set, to avoid accidentally turning a protected server public.
+
+    Note: this changes the *running* config only. On the next reboot, ``ofm-tile-auth.service``
+    re-reads the instance's EC2 user data, so for a durable rotation also update the launch
+    template's user data (see docs/self_hosting.md).
+    """
+    raw = sys.stdin.read().strip()
+    if not raw:
+        if not allow_clear:
+            sys.exit(
+                'refusing to clear tile-auth secrets: empty input. Pass --clear to make the '
+                'tile server public.'
+            )
+        print('clearing tile-auth secrets; tile server will be public')
+        _apply_parsed_secrets({})
+        return
+    try:
+        secrets = parse_tile_auth_secrets(raw)
+    except ValueError as e:
+        sys.exit(f'invalid TILE_AUTH_SECRETS: {e}')
+    print(f'setting tile-auth secrets; kid(s): {", ".join(secrets)}')
+    _apply_parsed_secrets(secrets)
+
+
 def apply_user_data_tile_auth():
     """Ingest ``TILE_AUTH_SECRETS`` from EC2 user data and (re)write the nginx config.
 
@@ -118,12 +165,8 @@ def apply_user_data_tile_auth():
     raw = extract_env_var(user_data, 'TILE_AUTH_SECRETS')
 
     if raw is None:
-        # No secret handed to this instance -> serve public. Drop any stale secret that may
-        # have been baked in, so the running config matches the "open server" intent.
-        if config.ofm_config.pop('tile_auth_secrets', None) is not None:
-            _persist_config()
         print('  no TILE_AUTH_SECRETS in user data; tile server stays public')
-        write_nginx_config()
+        _apply_parsed_secrets({})
         return
 
     try:
@@ -134,7 +177,5 @@ def apply_user_data_tile_auth():
         # an unprotected config rather than silently serving open tiles.
         sys.exit(f'  invalid TILE_AUTH_SECRETS in EC2 user data: {e}')
 
-    config.ofm_config['tile_auth_secrets'] = secrets
-    _persist_config()
     print(f'  enabling tile-server auth from user data; kid(s): {", ".join(secrets)}')
-    write_nginx_config()
+    _apply_parsed_secrets(secrets)

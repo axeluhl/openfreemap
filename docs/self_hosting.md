@@ -290,6 +290,34 @@ data and refreshing the ASG — no new AMI. Notes:
 - To flip a running fleet between public and secured, change the user-data line and replace the instances (an ASG
   instance refresh) — the change is applied on the next boot.
 
+**7. (Optional) Rotate the secret live, without replacing instances.** Replacing every instance just to change a
+secret is slow and expensive. `rotate-tile-auth-secrets.sh` (at the repo root) rotates the secret on the **running**
+fleet in seconds: given an authenticated `aws` CLI and SSH access (your local ssh-agent / key), it discovers the
+instances registered in a target group, SSHes into each, and runs `http_host.py set-tile-auth-secrets` on the host to
+rewrite `config.json` and **reload nginx gracefully** (SIGHUP — existing connections finish on the old workers, so no
+requests are dropped). The secret travels over the SSH stdin pipe, so it is never on any command line.
+
+```
+# rotate: keep the old kid AND add the new one, so tokens signed with either stay valid
+TILE_AUTH_SECRETS='k1:old-secret,k2:new-secret' \
+  ./rotate-tile-auth-secrets.sh --target-group ofm-tiles --region eu-central-1
+
+# ...roll the app over to signing with k2, wait for all k1 tokens to expire, then drop k1:
+TILE_AUTH_SECRETS='k2:new-secret' \
+  ./rotate-tile-auth-secrets.sh --target-group ofm-tiles --region eu-central-1
+```
+
+Useful flags: `--target-group` accepts a name or a full ARN; `--secrets-file <path>` (or an interactive prompt) as an
+alternative to the env var; `--clear` to make the fleet public; `--use-private-ip`, `--ssh-user`, `--ssh-option` (e.g.
+a `ProxyJump` bastion) for connectivity; `--dry-run` to just list the discovered hosts; `-y` to skip the confirmation.
+Run `./rotate-tile-auth-secrets.sh --help` for the full list.
+
+> **This changes the running config only.** On the next reboot, `ofm-tile-auth.service` re-reads the instance's EC2
+> user data. So for a *durable* rotation, also update the launch template's user-data line (step 6) — then the live
+> script secures the current instances immediately, and any instance that reboots or is newly launched picks up the
+> same secret. New instances that launch *between* the two changes get whatever the launch template currently has;
+> keep the old kid listed until you are sure no live token still uses it.
+
 #### 5. Check
 
 If everything is OK, you'll have some curl lines printed. Run the first one locally and make sure it's showing HTTP/2 200. For example this is an OK response.
@@ -390,7 +418,8 @@ refresh its token rather than seeing an opaque CORS error.
 **Rotation** is zero-downtime: append a new `kid` (e.g. `k3:...`) to `TILE_AUTH_SECRETS`, redeploy,
 start signing with it on the application side, and keep the old ids listed until every token signed
 with them has expired, then remove them. Clear `TILE_AUTH_SECRETS` (and redeploy) to return to fully
-public serving.
+public serving. For a running ASG fleet you don't have to redeploy at all — rotate live with
+`rotate-tile-auth-secrets.sh` (see *Rotate the secret live* in the golden-AMI section above).
 
 **Golden AMIs / Auto Scaling Groups.** Do **not** bake the secret into an AMI. Leave `TILE_AUTH_SECRETS`
 empty when baking (public image) and instead hand the secret to each instance at launch via EC2 user

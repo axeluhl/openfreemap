@@ -12,7 +12,10 @@ from http_host_lib.btrfs import (
 from http_host_lib.mount import auto_mount
 from http_host_lib.nginx import write_nginx_config
 from http_host_lib.sync import auto_clean_btrfs, full_sync
-from http_host_lib.user_data import apply_user_data_tile_auth
+from http_host_lib.user_data import (
+    apply_user_data_tile_auth,
+    set_tile_auth_secrets_from_stdin,
+)
 from http_host_lib.versions import fetch_version_files
 
 
@@ -117,6 +120,24 @@ def apply_user_data_secrets():
     """
 
     apply_user_data_tile_auth()
+
+
+@cli.command(name='set-tile-auth-secrets')
+@click.option(
+    '--clear',
+    is_flag=True,
+    help='Allow an empty stdin value to clear the secrets and make the tile server public',
+)
+def set_tile_auth_secrets(clear):
+    """
+    Reads a TILE_AUTH_SECRETS value ("kid:secret,...") from STDIN, writes it to
+    config.json and reloads nginx gracefully. Used by rotate-tile-auth-secrets.sh
+    to rotate the secret on running instances without replacing them. Reading
+    from stdin keeps the secret off the process list. This changes the running
+    config only; a reboot re-reads EC2 user data (see docs/self_hosting.md).
+    """
+
+    set_tile_auth_secrets_from_stdin(allow_clear=clear)
 
 
 @cli.command()
