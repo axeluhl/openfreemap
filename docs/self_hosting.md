@@ -262,6 +262,34 @@ line from `/etc/fstab` before baking to keep the image clean.
 Because every instance is identical and immutable, scaling out is instant and there is no shared state to coordinate.
 To ship a new planet version, bake a fresh AMI and roll the launch template / ASG to it (e.g. an instance refresh).
 
+**6. (Optional) Secure the fleet without baking a secret into the AMI.** A secret should not live in an image
+(rotation would force a re-bake, and the AMI could be shared/copied), so the golden AMI is baked **public** — leave
+`TILE_AUTH_SECRETS` empty in `config/.env` when you bake. Each instance is instead secured **at launch** by handing it
+the secret through EC2 **user data**. The deploy installs a oneshot systemd unit, `ofm-tile-auth.service`, that
+`nginx.service` depends on (`Requires=`/`After=` via a drop-in), so on every boot — *before* nginx starts — it reads
+the instance user data and, if it finds a `TILE_AUTH_SECRETS` assignment, ingests it into `config.json` and
+regenerates the nginx config with the short-lived-token guard active. If no such variable is present the tile server
+comes up fully public, exactly as the baked image is.
+
+Put a single line in the launch template's **user data** (a bare env line, or the same line inside a `#!/bin/bash`
+script — both are recognised):
+
+```
+TILE_AUTH_SECRETS=k1:AbC-123_xyz,k2:Def-456_uvw
+```
+
+The value uses the exact same `kid:secret,…` format and `[A-Za-z0-9_-]` alphabet as the `.env` variable (see
+*Restricting access with short-lived tokens* below). Rotating secrets is then just editing the launch template's user
+data and refreshing the ASG — no new AMI. Notes:
+
+- The unit reads the secret from the instance metadata service (IMDSv2) inside the process, so it never appears on a
+  command line or in the AMI. Nothing is logged except the key ids.
+- It is resilient: on a non-EC2 host or a transient IMDS hiccup it leaves the baked (public) config in place and still
+  brings nginx up. The **only** hard failure is a *malformed* `TILE_AUTH_SECRETS` — it then fails closed (nginx does
+  not start with an unprotected config; the ASG replaces the instance) rather than silently serving open tiles.
+- To flip a running fleet between public and secured, change the user-data line and replace the instances (an ASG
+  instance refresh) — the change is applied on the next boot.
+
 #### 5. Check
 
 If everything is OK, you'll have some curl lines printed. Run the first one locally and make sure it's showing HTTP/2 200. For example this is an OK response.
@@ -363,6 +391,11 @@ refresh its token rather than seeing an opaque CORS error.
 start signing with it on the application side, and keep the old ids listed until every token signed
 with them has expired, then remove them. Clear `TILE_AUTH_SECRETS` (and redeploy) to return to fully
 public serving.
+
+**Golden AMIs / Auto Scaling Groups.** Do **not** bake the secret into an AMI. Leave `TILE_AUTH_SECRETS`
+empty when baking (public image) and instead hand the secret to each instance at launch via EC2 user
+data; the `ofm-tile-auth.service` installed by the deploy applies it before nginx starts. See *Secure the
+fleet without baking a secret into the AMI* under the golden-AMI section above.
 
 #### Deploy tile-gen server (optional)
 If you have a really beefy machine (see above) and you really want to generate tiles yourself, you can run `./init-server.py tile-gen HOSTNAME`.

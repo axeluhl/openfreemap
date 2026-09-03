@@ -44,6 +44,48 @@ def get_tile_auth_secrets() -> dict:
     return result
 
 
+def parse_tile_auth_secrets(raw: str) -> dict:
+    """Parse a ``TILE_AUTH_SECRETS`` ``kid:secret,...`` string into a ``{kid: secret}`` dict.
+
+    This is the host-side counterpart of ``parse_tile_auth_secrets`` in ``ssh_lib/tasks.py``
+    (the deploy-side parser that reads the same value from ``.env``) and of the git-sail
+    application side; all three consume the identical format and alphabet. It exists on the
+    host so the boot-time ``ofm-tile-auth.service`` can ingest a ``TILE_AUTH_SECRETS`` value
+    handed to the instance via EC2 user data (see ``http_host_lib/user_data.py``) without a
+    redeploy.
+
+    The value is a comma-separated list of ``kid:secret`` pairs; the comma separates entries
+    and the first colon separates a kid from its secret, so both kids and secrets must match
+    the URL-safe base64url alphabet ``[A-Za-z0-9_-]`` -- no commas, colons, spaces or quotes,
+    and there is deliberately no escaping. A blank value yields an empty dict (auth disabled);
+    any malformed entry raises ``ValueError`` so the caller can decide how to react (the
+    user-data path fails closed rather than silently serving unprotected tiles).
+    """
+    result = {}
+    raw = (raw or '').strip()
+    if not raw:
+        return result
+    for entry in raw.split(','):
+        entry = entry.strip()
+        colon_index = entry.find(':')
+        if colon_index <= 0 or colon_index >= len(entry) - 1:
+            raise ValueError(
+                f'TILE_AUTH_SECRETS entry {entry!r} is malformed; expected kid:secret '
+                f'(comma-separated), with kid and secret both matching [A-Za-z0-9_-]'
+            )
+        kid = entry[:colon_index]
+        secret = entry[colon_index + 1:]
+        if not _TILE_AUTH_TOKEN_RE.match(kid) or not _TILE_AUTH_TOKEN_RE.match(secret):
+            raise ValueError(
+                f'TILE_AUTH_SECRETS entry {entry!r} has an invalid kid or secret; both must '
+                f'be non-empty and match [A-Za-z0-9_-] (no commas, colons, spaces or quotes)'
+            )
+        if kid in result:
+            raise ValueError(f'TILE_AUTH_SECRETS contains duplicate kid {kid!r}')
+        result[kid] = secret
+    return result
+
+
 def secure_link_guard() -> str:
     """Return the per-location ``secure_link`` guard, or '' when auth is disabled.
 
@@ -146,7 +188,15 @@ def write_nginx_config():
     )
 
     subprocess.run(['nginx', '-t'], check=True)
-    subprocess.run(['systemctl', 'reload', 'nginx'], check=True)
+    # Reload only if nginx is already running. During a normal deploy nginx is up, so its
+    # workers pick up the new config. At boot, however, the ofm-tile-auth.service regenerates
+    # this config *before* nginx starts (nginx.service Requires/After it, so a TILE_AUTH_SECRETS
+    # from EC2 user data is applied first) -- there is nothing to reload yet, and nginx then
+    # starts straight from the freshly written files.
+    if subprocess.run(['systemctl', 'is-active', '--quiet', 'nginx']).returncode == 0:
+        subprocess.run(['systemctl', 'reload', 'nginx'], check=True)
+    else:
+        print('  nginx is not running yet; skipping reload (it will start with this config)')
 
     curl_text_lines = sorted(curl_text_mix.splitlines())
     if config.ofm_config.get('skip_planet'):

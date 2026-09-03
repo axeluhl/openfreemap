@@ -15,7 +15,7 @@ from ssh_lib import (
 )
 from ssh_lib.benchmark import c1000k, wrk
 from ssh_lib.kernel import kernel_limits1m, kernel_somaxconn65k
-from ssh_lib.nginx import nginx
+from ssh_lib.nginx import install_tile_auth_service, nginx
 from ssh_lib.pkg_base import pkg_base, pkg_upgrade
 from ssh_lib.planetiler import install_planetiler
 from ssh_lib.rclone import rclone
@@ -196,6 +196,11 @@ def prepare_http_host(c):
     upload_http_host_files(c)
 
     c.sudo(f'{VENV_BIN}/pip install -e {HTTP_HOST_BIN} --use-pep517')
+
+    # Enable the boot-time EC2-user-data tile-auth ingestion service. Installed after the
+    # http_host bin (its ExecStart runs http_host.py) so a golden AMI can be secured at launch
+    # via TILE_AUTH_SECRETS in user data instead of baking the secret into the image.
+    install_tile_auth_service(c)
 
 
 def run_http_host_sync(c):

@@ -12,6 +12,7 @@ from http_host_lib.btrfs import (
 from http_host_lib.mount import auto_mount
 from http_host_lib.nginx import write_nginx_config
 from http_host_lib.sync import auto_clean_btrfs, full_sync
+from http_host_lib.user_data import apply_user_data_tile_auth
 from http_host_lib.versions import fetch_version_files
 
 
@@ -103,6 +104,19 @@ def sync(force):
     print(f'---\n{now}\nStarting sync')
 
     full_sync(force)
+
+
+@cli.command(name='apply-user-data-secrets')
+def apply_user_data_secrets():
+    """
+    Ingests TILE_AUTH_SECRETS from the EC2 instance user data (if present) and
+    regenerates the nginx config, enabling the short-lived-token guard. With no
+    such variable the tile server stays public. Run at boot by
+    ofm-tile-auth.service, before nginx starts, so no secret needs to be baked
+    into the AMI.
+    """
+
+    apply_user_data_tile_auth()
 
 
 @cli.command()
