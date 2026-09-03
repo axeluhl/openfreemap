@@ -7,8 +7,10 @@ Documentation=https://github.com/hyperknot/openfreemap/blob/main/docs/self_hosti
 # blocks.
 Wants=network-online.target
 After=network-online.target local-fs.target
-# nginx.service Requires/After this unit (see the nginx.service.d drop-in). Regenerate the
-# config before nginx starts so a TILE_AUTH_SECRETS provided via user data is already active.
+# Ordering-only dependency: nginx starts *after* this unit at boot (both are pulled in by
+# multi-user.target), so a TILE_AUTH_SECRETS provided via user data is applied before nginx
+# serves. Deliberately NOT a hard Requires= on nginx's side -- a deploy-time or manual
+# `systemctl restart nginx` must never be blocked by this unit.
 Before=nginx.service
 
 [Service]
