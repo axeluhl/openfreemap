@@ -205,7 +205,7 @@ Do not bake on an x86 instance.
 
 **1. Launch the bake instance.** From a clean **Amazon Linux 2023 (arm64)** image:
 
-- Instance type **`m6gd.large`** (2 vCPU, 8 GB RAM, 1×118 GB instance-store NVMe).
+- Instance type **`m6gd.large`** (2 vCPU, 8 GB RAM, 1×118 GB instance-store NVMe) if you plan do **download** the tiles; **`t4g.small`** in case you want to use the `--copy-runs-from-host` option, so you don't need the extra NVMe space for storing the download
 - A single **200 GB gp3 root** EBS volume — same size the `t4g.small` fleet will run, so the AMI is sized right.
   During the bake, temporarily raise the root volume's gp3 throughput (e.g. to 500–1000 MB/s) so the ~170 GB
   decompress-to-EBS write is fast; runtime reads on `t4g.small` are unaffected by that setting.
