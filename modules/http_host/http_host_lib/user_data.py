@@ -8,13 +8,20 @@ captured in an AMI. Instead the secret is handed to each instance at launch thro
     TILE_AUTH_SECRETS=k1:AbC-123_xyz,k2:Def-456_uvw
 
 On boot ``ofm-tile-auth.service`` runs ``apply_user_data_tile_auth`` (via
-``http_host.py apply-user-data-secrets``) *before* nginx starts. If the variable is present it
-is ingested into ``/data/ofm/config/config.json`` and the nginx config is regenerated so the
-short-lived-token guard is active; if it is absent the tile server stays fully public. The unit
-is deliberately resilient: on a non-EC2 host or a transient IMDS failure it leaves the baked
-config untouched and still (re)writes the nginx config, so nginx always comes up. The only hard
-failure is a *malformed* ``TILE_AUTH_SECRETS`` (fail closed -- an operator who asked for
-protection must not silently get an open server).
+``http_host.py apply-user-data-secrets``) *before* nginx starts (the unit is ordered
+``Before=nginx.service`` and pulled in by ``multi-user.target``). It is **non-destructive**:
+
+- ``TILE_AUTH_SECRETS`` absent from user data -> leave the existing config as-is (a public AMI
+  stays public; a host secured via ``.env`` keeps its secret across reboots);
+- ``TILE_AUTH_SECRETS=k1:...`` -> ingest it into ``config.json`` and regenerate the nginx
+  config with the short-lived-token guard active;
+- ``TILE_AUTH_SECRETS=`` (explicitly empty) -> clear it and serve public.
+
+The unit never blocks nginx from starting: on a non-EC2 host or a transient IMDS failure it
+leaves the config untouched and exits, and the dependency on nginx is ordering-only (no hard
+``Requires=``), so a deploy-time or manual ``systemctl restart nginx`` never cascades. A
+*malformed* ``TILE_AUTH_SECRETS`` exits non-zero (the unit shows failed, for visibility) but
+still lets nginx come up from the existing config.
 """
 
 import json
@@ -66,13 +73,17 @@ def fetch_ec2_user_data():
 
 
 def extract_env_var(user_data: str, name: str):
-    """Return the value of a ``NAME=value`` assignment in ``user_data``, or ``None``.
+    """Return the value of a ``NAME=value`` assignment in ``user_data``.
 
-    Scans the user data line by line for ``NAME=...`` (optionally ``export NAME=...``), so it
-    works whether the user data is a bare env file or the variable is set inside a shell
-    script. Surrounding single/double quotes are stripped. The last matching line wins; an
-    empty value is treated as absent (``None``) so an explicit ``TILE_AUTH_SECRETS=`` keeps the
-    server public.
+    Distinguishes three cases so the caller can behave non-destructively:
+
+    - ``None`` -- ``NAME`` is **not present** in the user data at all;
+    - ``''`` -- ``NAME=`` is present but **empty** (an explicit request to clear);
+    - a non-empty string -- the assigned value.
+
+    Scans line by line for ``NAME=...`` (optionally ``export NAME=...``), so it works whether
+    the user data is a bare env file or the variable is set inside a shell script. Surrounding
+    single/double quotes are stripped and the last matching line wins.
     """
     if not user_data:
         return None
@@ -86,8 +97,7 @@ def extract_env_var(user_data: str, name: str):
         return None
     if len(value) >= 2 and value[0] in '"\'' and value[-1] == value[0]:
         value = value[1:-1]
-    value = value.strip()
-    return value or None
+    return value.strip()
 
 
 def _persist_config():
@@ -146,35 +156,43 @@ def set_tile_auth_secrets_from_stdin(allow_clear: bool = False):
 def apply_user_data_tile_auth():
     """Ingest ``TILE_AUTH_SECRETS`` from EC2 user data and (re)write the nginx config.
 
-    Called at boot by ``ofm-tile-auth.service`` before nginx starts. See the module docstring
-    for the overall contract.
+    Called at boot by ``ofm-tile-auth.service`` before nginx starts. Non-destructive by design
+    (see the module docstring): the tile-auth config is only touched when user data explicitly
+    says so, so this never clobbers a secret configured another way (e.g. via ``.env`` on a
+    directly-managed host) and never blocks nginx from starting.
     """
     print('Applying tile-auth secrets from EC2 user data (if any)')
 
     try:
         user_data = fetch_ec2_user_data()
-    except Exception as e:  # noqa: BLE001 - IMDS/network errors must never brick boot
+    except Exception as e:  # noqa: BLE001 - IMDS/network errors must never block nginx
         print(
-            f'  could not read EC2 user data ({e}); leaving the baked tile-auth config '
+            f'  could not read EC2 user data ({e}); leaving the existing tile-auth config '
             f'unchanged',
             file=sys.stderr,
         )
-        write_nginx_config()
         return
 
     raw = extract_env_var(user_data, 'TILE_AUTH_SECRETS')
 
     if raw is None:
-        print('  no TILE_AUTH_SECRETS in user data; tile server stays public')
+        # TILE_AUTH_SECRETS is not mentioned in user data at all -> leave the existing config
+        # untouched. With the recommended public AMI this simply keeps the server public; on a
+        # host secured via .env it preserves that secret across reboots.
+        print('  no TILE_AUTH_SECRETS in user data; leaving the existing tile-auth config as-is')
+        return
+
+    if raw == '':
+        # Explicit empty value (TILE_AUTH_SECRETS=) -> operator asked to clear it -> public.
+        print('  TILE_AUTH_SECRETS is empty in user data; clearing tile-auth (server public)')
         _apply_parsed_secrets({})
         return
 
     try:
         secrets = parse_tile_auth_secrets(raw)
     except ValueError as e:
-        # Fail closed: the operator explicitly asked for protection but the value is broken.
-        # nginx.service Requires this unit, so exiting non-zero keeps nginx from starting with
-        # an unprotected config rather than silently serving open tiles.
+        # An explicit but malformed value is an operator error; surface it loudly (the unit
+        # shows failed in `systemctl status`). nginx still starts from the existing config.
         sys.exit(f'  invalid TILE_AUTH_SECRETS in EC2 user data: {e}')
 
     print(f'  enabling tile-server auth from user data; kid(s): {", ".join(secrets)}')

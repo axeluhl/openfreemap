@@ -265,11 +265,10 @@ To ship a new planet version, bake a fresh AMI and roll the launch template / AS
 **6. (Optional) Secure the fleet without baking a secret into the AMI.** A secret should not live in an image
 (rotation would force a re-bake, and the AMI could be shared/copied), so the golden AMI is baked **public** — leave
 `TILE_AUTH_SECRETS` empty in `config/.env` when you bake. Each instance is instead secured **at launch** by handing it
-the secret through EC2 **user data**. The deploy installs a oneshot systemd unit, `ofm-tile-auth.service`, that
-`nginx.service` depends on (`Requires=`/`After=` via a drop-in), so on every boot — *before* nginx starts — it reads
-the instance user data and, if it finds a `TILE_AUTH_SECRETS` assignment, ingests it into `config.json` and
-regenerates the nginx config with the short-lived-token guard active. If no such variable is present the tile server
-comes up fully public, exactly as the baked image is.
+the secret through EC2 **user data**. The deploy installs a oneshot systemd unit, `ofm-tile-auth.service`, ordered
+*before* `nginx.service` (via `Before=nginx.service`, an ordering-only dependency — no hard `Requires=`, so it can
+never block nginx from starting). On every boot, before nginx starts, it reads the instance user data and applies a
+`TILE_AUTH_SECRETS` assignment to `config.json`, regenerating the nginx config with the short-lived-token guard active.
 
 Put a single line in the launch template's **user data** (a bare env line, or the same line inside a `#!/bin/bash`
 script — both are recognised):
@@ -284,11 +283,16 @@ data and refreshing the ASG — no new AMI. Notes:
 
 - The unit reads the secret from the instance metadata service (IMDSv2) inside the process, so it never appears on a
   command line or in the AMI. Nothing is logged except the key ids.
-- It is resilient: on a non-EC2 host or a transient IMDS hiccup it leaves the baked (public) config in place and still
-  brings nginx up. The **only** hard failure is a *malformed* `TILE_AUTH_SECRETS` — it then fails closed (nginx does
-  not start with an unprotected config; the ASG replaces the instance) rather than silently serving open tiles.
-- To flip a running fleet between public and secured, change the user-data line and replace the instances (an ASG
-  instance refresh) — the change is applied on the next boot.
+- It is **non-destructive** and never blocks nginx. The variable is a tri-state:
+  **absent** from user data → leave the existing config untouched (a public AMI stays public; a `.env`-secured host
+  keeps its secret across reboots); **`TILE_AUTH_SECRETS=k1:…`** → enable auth with those secrets;
+  **`TILE_AUTH_SECRETS=`** (explicitly empty) → clear the secret and serve public.
+- On a non-EC2 host or a transient IMDS hiccup it leaves the config unchanged and still lets nginx start. A *malformed*
+  `TILE_AUTH_SECRETS` marks the unit failed (visible in `systemctl status ofm-tile-auth.service`) but nginx still comes
+  up from the existing config — fix the value and reboot (or re-run the unit).
+- To flip a running fleet between public and secured, either rotate live (step 7) or change the user-data line
+  (`TILE_AUTH_SECRETS=…` to secure, `TILE_AUTH_SECRETS=` to go public) and replace the instances (an ASG instance
+  refresh) — the user-data change is applied on the next boot.
 
 **7. (Optional) Rotate the secret live, without replacing instances.** Replacing every instance just to change a
 secret is slow and expensive. `rotate-tile-auth-secrets.sh` (at the repo root) rotates the secret on the **running**
