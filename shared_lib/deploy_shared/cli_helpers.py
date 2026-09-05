@@ -7,6 +7,44 @@ from fabric import Config, Connection
 from invoke.exceptions import UnexpectedExit
 
 
+DEFAULT_SSH_USER = 'ec2-user'
+
+
+def resolve_deploy_targets(
+    jsonc_data: dict[str, Any], hostname: str | None, user: str | None
+) -> list[tuple[str, str]]:
+    """Resolve the ``(host, ssh_user)`` deploy targets.
+
+    The config describes the *type* of process and setup, not the volatile deploy IP. A
+    command-line ``--host`` (optionally given as ``user@host``) is therefore authoritative:
+    it is used as-is and need NOT appear in the config's ``hosts`` list, which may be empty
+    or missing. Any config ``hosts`` that do not match are simply ignored. Only when no
+    ``--host`` is given do we fall back to the config ``hosts``.
+
+    SSH user precedence: ``user@`` in ``--host`` > ``--user`` > config ``ssh_user`` >
+    ``ec2-user``.
+    """
+    config_user = jsonc_data.get('ssh_user')
+
+    if hostname:
+        host_user, sep, host = hostname.rpartition('@')
+        if sep and host_user:
+            return [(host, host_user)]
+        return [(hostname, user or config_user or DEFAULT_SSH_USER)]
+
+    default_user = user or config_user or DEFAULT_SSH_USER
+    hosts = jsonc_data.get('hosts') or []
+    if not hosts:
+        raise click.ClickException(
+            'No deploy host. Pass --host [user@]host, or add "hosts" to the config.'
+        )
+    if len(hosts) > 1:
+        raise click.ClickException(
+            'The config contains multiple hosts. Select one with --host to avoid downtime.'
+        )
+    return [(hosts[0], default_user)]
+
+
 def get_connection(hostname: str, user: str | None, port: int | None) -> Connection:
     ssh_password = os.getenv('SSH_PASSWD')
     sudo_password = os.getenv('SUDO_PASSWD', ssh_password)
@@ -65,14 +103,19 @@ def check_sudo(c: Connection, *, sudo_password: bool) -> None:
 
 def common_options(func: Callable[..., Any]) -> Callable[..., Any]:
     """Decorator to define common deploy arguments and options."""
-    decorated = click.option('--host', 'hostname', help='Deploy only to this host from the config')(
-        func
-    )
+    decorated = click.option(
+        '--host',
+        'hostname',
+        help='Deploy to this host as [user@]host. Authoritative: used as-is and need not appear '
+        'in the config hosts.',
+    )(func)
     decorated = click.option(
         '--config', 'config_name', required=True, help='Config name without .jsonc'
     )(decorated)
     decorated = click.option('--port', type=int, help='SSH port (if not in .ssh/config)')(decorated)
-    decorated = click.option('--user', help='SSH user (if not in .ssh/config)')(decorated)
+    decorated = click.option(
+        '--user', help=f'SSH user (defaults to config ssh_user or {DEFAULT_SSH_USER})'
+    )(decorated)
     decorated = click.option(
         '-y', '--noninteractive', is_flag=True, help='Skip confirmation questions'
     )(decorated)

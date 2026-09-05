@@ -1,7 +1,14 @@
 {
   "$schema": "./schema.json",
 
+  // Optional deploy targets. Normally you pass the deploy IP on the command line
+  // with --host [user@]host, which overrides this list, so it may be empty/omitted.
   "hosts": ["my-tilegen-host"],
+
+  // Optional default SSH user, used when --host has no user@ prefix and --user is
+  // not given. Defaults to "ec2-user".
+  // "ssh_user": "ec2-user",
+
   // Enables automated tile builds, uploads, version publication, and index refreshes.
   "cron": false,
 

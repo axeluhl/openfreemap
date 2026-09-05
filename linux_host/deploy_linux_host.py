@@ -18,7 +18,11 @@ from linux_host.linux_host_lib.config_loader import (
     read_linux_host_jsonc_config,
     resolve_upload_cert_paths,
 )
-from shared_lib.deploy_shared.cli_helpers import common_options, get_connection
+from shared_lib.deploy_shared.cli_helpers import (
+    common_options,
+    get_connection,
+    resolve_deploy_targets,
+)
 from shared_lib.deploy_shared.tasks_shared import prepare_shared
 
 
@@ -67,18 +71,18 @@ def deploy(
             'Copied runs are served as-is; without local_versions the next sync would follow the '
             'upstream deployed-version pointer and re-download tiles, defeating the copy.'
         )
-    hosts = resolve_hosts(jsonc_data, hostname)
-    if not confirm_hosts(hosts, noninteractive):
+    targets = resolve_deploy_targets(jsonc_data, hostname, user)
+    if not confirm_hosts([host for host, _ in targets], noninteractive):
         return
 
-    for host in hosts:
-        c = get_connection(host, user, port)
+    for host, ssh_user in targets:
+        c = get_connection(host, ssh_user, port)
         clean_linux_host(c, jsonc_data['areas'])
         prepare_shared(c, linux_host_deploy_config)
         prepare_linux_host(c, jsonc_path)
         if copy_runs_src_host:
             # Runs are copied straight onto the versions volume; no download, so no NVMe staging.
-            copy_runs_from_host(c, copy_runs_src_host, copy_runs_user or user)
+            copy_runs_from_host(c, copy_runs_src_host, copy_runs_user or ssh_user)
         elif not no_nvme:
             mount_nvme_download_volume(c, min_size_gb=nvme_min_size_gb)
         if jsonc_data['auto_update']:
@@ -103,17 +107,6 @@ def validate_local_cert_files(jsonc_path: Path, jsonc_data: dict[str, Any]) -> N
                 f'Certificate or key file for {domain_data["domain"]} was not found.\n'
                 f'Make sure these files exist:\n{cert_path}\n{key_path}'
             )
-
-
-def resolve_hosts(jsonc_data: dict[str, Any], hostname: str | None) -> list[str]:
-    hosts = jsonc_data['hosts']
-    if hostname and hostname not in hosts:
-        raise click.ClickException(f'Host {hostname} not found in hosts config')
-    if not hostname and len(hosts) > 1:
-        raise click.ClickException(
-            'The config contains multiple hosts. Select one with --host to avoid downtime.'
-        )
-    return [hostname] if hostname else hosts
 
 
 def confirm_hosts(hosts: list[str], noninteractive: bool) -> bool:

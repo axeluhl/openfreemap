@@ -2,7 +2,11 @@
 
 import click
 
-from shared_lib.deploy_shared.cli_helpers import common_options, get_connection
+from shared_lib.deploy_shared.cli_helpers import (
+    common_options,
+    get_connection,
+    resolve_deploy_targets,
+)
 from shared_lib.deploy_shared.tasks_shared import prepare_shared
 from shared_lib.utils.jsonc_config import read_jsonc_config
 from tilegen.deploy_tilegen.tasks_tilegen import (
@@ -34,15 +38,14 @@ def deploy(
     except (FileNotFoundError, RuntimeError) as e:
         raise click.ClickException(str(e)) from e
 
-    hosts = jsonc_data['hosts']
-    if hostname and hostname not in hosts:
-        raise click.ClickException(f'Host {hostname} not found in hosts config')
-    targets = [hostname] if hostname else hosts
-    if not noninteractive and not click.confirm(f'Run on {", ".join(targets)}?'):
+    targets = resolve_deploy_targets(jsonc_data, hostname, user)
+    if not noninteractive and not click.confirm(
+        f'Run on {", ".join(host for host, _ in targets)}?'
+    ):
         return
 
-    for host in targets:
-        c = get_connection(host, user, port)
+    for host, ssh_user in targets:
+        c = get_connection(host, ssh_user, port)
 
         # Deployments are rare, so a process check is simpler than a runtime lock.
         # The tiny race before cron removal is acceptable here.

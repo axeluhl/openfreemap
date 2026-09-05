@@ -29,8 +29,14 @@
     },
   ],
 
-  // SSH aliases used as deploy targets.
+  // Optional deploy targets. Normally you pass the deploy IP on the command line
+  // with --host [user@]host, which is authoritative and overrides this list, so
+  // this may be empty or omitted. Listed hosts are only used when --host is absent.
   "hosts": ["my-ofm-host"],
+
+  // Optional default SSH user for deploys, used when --host has no user@ prefix
+  // and --user is not given. Defaults to "ec2-user".
+  // "ssh_user": "ec2-user",
 
   // Prefetch completed releases and follow the shared deployed-version file.
   // Set to false to start one detached sync at deployment and install no cron.

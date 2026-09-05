@@ -13,12 +13,15 @@
     },
     "hosts": {
       "type": "array",
-      "description": "SSH aliases of the servers this config deploys to.",
-      "minItems": 1,
+      "description": "Optional SSH aliases this config may deploy to. The deploy IP is normally passed with --host [user@]host, which overrides this list; may be empty or omitted.",
       "items": {
         "type": "string",
         "minLength": 1
       }
+    },
+    "ssh_user": {
+      "type": "string",
+      "description": "Default SSH user for deploys when --host has no user@ prefix and --user is not given. Defaults to 'ec2-user'."
     },
     "auto_update": {
       "type": "boolean",
@@ -53,7 +56,7 @@
       "description": "Telegram topic id"
     }
   },
-  "required": ["domains", "hosts", "auto_update", "areas"],
+  "required": ["domains", "auto_update", "areas"],
   "definitions": {
     "cert-upload": {
       "type": "object",

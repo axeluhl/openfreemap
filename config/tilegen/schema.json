@@ -8,11 +8,15 @@
     },
     "hosts": {
       "type": "array",
-      "minItems": 1,
+      "description": "Optional SSH aliases this config may deploy to. The deploy IP is normally passed with --host [user@]host, which overrides this list; may be empty or omitted.",
       "items": {
         "type": "string",
         "minLength": 1
       }
+    },
+    "ssh_user": {
+      "type": "string",
+      "description": "Default SSH user for deploys when --host has no user@ prefix and --user is not given. Defaults to 'ec2-user'."
     },
     "cron": {
       "type": "boolean"
@@ -27,5 +31,5 @@
       "type": "integer"
     }
   },
-  "required": ["hosts", "cron"]
+  "required": ["cron"]
 }

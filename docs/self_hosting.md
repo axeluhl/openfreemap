@@ -72,7 +72,10 @@ I recommend running things quickly first, with `"areas": ["monaco"]` and then on
         - `dummy` — self-signed, for local testing only
 
       See the comments in the sample for the exact syntax.
-    - set `hosts` to your SSH alias(es) (or `user@host` entries)
+    - optionally set `hosts` — but you normally pass the deploy IP on the command line with `--host [user@]host`
+      instead (see below), so `hosts` may be empty or omitted
+    - optionally set `ssh_user` — the default SSH user when `--host` has no `user@` prefix and `--user` is not given
+      (defaults to `ec2-user`)
     - set `auto_update`: `true` installs a once-per-minute sync cron (deployment is asynchronous); `false` starts one
       detached sync session at deploy time and installs no cron
     - set `areas`: use `["monaco"]` for the first quick deploy, then `["planet", "monaco"]` for the full deploy
@@ -93,19 +96,17 @@ I recommend running things quickly first, with `"areas": ["monaco"]` and then on
     Run the actual deploy command. The config name maps to `config/linux_host/self-hosted.jsonc`:
 
     ```
-    ./linux_host/deploy_linux_host.py --config self-hosted
+    ./linux_host/deploy_linux_host.py --config self-hosted --host <IP-ADDRESS>
     ```
 
-    This targets every host listed in the config's `hosts` array. To target a single host, pass its alias (which must
-    be one of the entries in `hosts`):
-
-    ```
-    ./linux_host/deploy_linux_host.py --config self-hosted --host HOSTNAME
-    ```
+    `--host` takes `[user@]host` and is authoritative: the given host is used as-is and does **not** need to appear
+    in the config's `hosts` array (the config describes the *type* of setup, not the volatile deploy IP). If you omit
+    `--host`, the deploy falls back to the config's `hosts` (and requires exactly one entry, or `--host` to pick one).
 
     The deploy script connects over SSH. You can SSH as `root` or as a normal sudo-capable user; the script creates
-    and uses an `ofm` runtime user. On an AWS EC2 Amazon Linux instance the login user is `ec2-user`. If needed, add
-    `--user YOUR_SSH_USER` and/or `--port 22`.
+    and uses an `ofm` runtime user. On an AWS EC2 Amazon Linux instance the login user is `ec2-user`, which is the
+    default SSH user. Override it with `ec2-user@<IP>` in `--host`, with `--user YOUR_SSH_USER`, or with `ssh_user` in
+    the config; add `--port 22` if needed.
 
     For password-based SSH, set `SSH_PASSWD`. If sudo uses a different password, set `SUDO_PASSWD` too:
 
@@ -210,8 +211,10 @@ The whole architecture stays **arm64**: the bake instance is Graviton, so the AM
 - `"auto_update": false` — a golden AMI should serve a **fixed, immutable** version; you do not want each auto-scaled
   instance re-downloading tiles or drifting to a different version at boot,
 - `"local_versions": true` — so booted fleet instances serve the baked tiles without contacting the upstream pointer,
-- `"areas": ["planet", "monaco"]`,
-- `hosts` containing the bake instance's IP/alias.
+- `"areas": ["planet", "monaco"]`.
+
+You pass the bake instance's IP on the command line with `--host` (below), so `hosts` in the config can be left
+empty or omitted.
 
 Run the deploy from your workstation and wait for the one-off sync to download and decompress the tiles onto the root
 volume (this is the long step; the "Download aborted" lines from CloudFlare in the meantime are harmless):
@@ -253,8 +256,8 @@ Notes:
 
 - `--copy-runs-from-host` **requires `"local_versions": true`** in the bake config (the deploy refuses otherwise):
   copied runs are served as-is, and without local mode the sync would follow the upstream pointer and re-download.
-- `--copy-runs-user` is the SSH user on the **source** host; it defaults to the target `--user` / your ssh login
-  user.
+- `--copy-runs-user` is the SSH user on the **source** host; it defaults to the resolved target SSH user (the
+  `user@` in `--host`, else `--user`, else config `ssh_user`, else `ec2-user`).
 - The `scp` runs **on the new host** and authenticates to the source using your **forwarded ssh-agent** (agent
   forwarding is enabled automatically). Make sure your local `ssh-agent` holds a key that can reach the source host
   (`ssh-add`) before running the deploy. The source host key is auto-accepted (`StrictHostKeyChecking=accept-new`).
@@ -457,10 +460,13 @@ cp config/tilegen/config.sample.jsonc config/tilegen/self-hosted.jsonc
 Set `cron` to `true` only if this host should run automated tile builds, uploads, version publication, and index refreshes. Then deploy using the config name that maps to `config/tilegen/self-hosted.jsonc`:
 
 ```
-./tilegen/deploy_tilegen.py --config self-hosted [--host HOSTNAME]
+./tilegen/deploy_tilegen.py --config self-hosted --host <IP-ADDRESS>
 ```
 
-The same `--user`, `--port`, `SSH_PASSWD` and `SUDO_PASSWD` options from the linux_host deploy also work here. Each deployment installs or removes the tilegen cron job according to the config.
+`--host` takes `[user@]host` and is authoritative (the host need not be in the config's `hosts`); omit it to fall
+back to a single `hosts` entry. The same `--user`, `--port`, `ssh_user` (config), `SSH_PASSWD` and `SUDO_PASSWD`
+options from the linux_host deploy also work here. Each deployment installs or removes the tilegen cron job according
+to the config.
 
 A normal deployment refuses to make any server change if a `make-tiles` build is running.
 

@@ -58,7 +58,7 @@ class LinuxHostConfig:
         self.auto_update = jsonc_data['auto_update']
         self.local_versions = jsonc_data.get('local_versions', False)
         self.domains = jsonc_data['domains']
-        self.hosts = jsonc_data['hosts']
+        self.hosts = jsonc_data.get('hosts', [])
         self.root_redirect_url = jsonc_data.get('root_redirect_url')
         self.telegram_token = jsonc_data.get('telegram_token')
         self.telegram_chat_id = jsonc_data.get('telegram_chat_id')
