@@ -258,6 +258,15 @@ Notes:
   copied runs are served as-is, and without local mode the sync would follow the upstream pointer and re-download.
 - `--copy-runs-user` is the SSH user on the **source** host; it defaults to the resolved target SSH user (the
   `user@` in `--host`, else `--user`, else config `ssh_user`, else `ec2-user`).
+- `--copy-runs-src-dir` is the runs directory **on the source** host. It defaults to this host's
+  `/data/ofm/linux_host/versions`. If the source runs the **old layout** (an `http_host` host from before the
+  `linux_host`/`tilegen` restructure), point it at the old path — the inner `<area>/<version>/tiles.btrfs` layout is
+  identical, only the base path differs:
+
+  ```
+  ./linux_host/deploy_linux_host.py --config bake --host <IP-ADDRESS> \
+      --copy-runs-from-host 10.0.0.5 --copy-runs-src-dir /data/ofm/http_host/runs
+  ```
 - The `scp` runs **on the new host** and authenticates to the source using your **forwarded ssh-agent** (agent
   forwarding is enabled automatically). Make sure your local `ssh-agent` holds a key that can reach the source host
   (`ssh-add`) before running the deploy. The source host key is auto-accepted (`StrictHostKeyChecking=accept-new`).

@@ -39,6 +39,11 @@ from shared_lib.deploy_shared.tasks_shared import prepare_shared
     help='SSH user for --copy-runs-from-host (defaults to the target --user / ssh login user).',
 )
 @click.option(
+    '--copy-runs-src-dir',
+    help="Runs directory on the --copy-runs-from-host source (default: this host's "
+    '/data/ofm/linux_host/versions). Use /data/ofm/http_host/runs to seed from an old-layout host.',
+)
+@click.option(
     '--no-nvme',
     is_flag=True,
     help='Do not stage the btrfs download on a local ephemeral NVMe; download onto the versions '
@@ -60,6 +65,7 @@ def deploy(
     noninteractive: bool,
     copy_runs_src_host: str | None,
     copy_runs_user: str | None,
+    copy_runs_src_dir: str | None,
     no_nvme: bool,
     nvme_min_size_gb: int,
 ) -> None:
@@ -82,7 +88,9 @@ def deploy(
         prepare_linux_host(c, jsonc_path)
         if copy_runs_src_host:
             # Runs are copied straight onto the versions volume; no download, so no NVMe staging.
-            copy_runs_from_host(c, copy_runs_src_host, copy_runs_user or ssh_user)
+            copy_runs_from_host(
+                c, copy_runs_src_host, copy_runs_user or ssh_user, copy_runs_src_dir
+            )
         elif not no_nvme:
             mount_nvme_download_volume(c, min_size_gb=nvme_min_size_gb)
         if jsonc_data['auto_update']:

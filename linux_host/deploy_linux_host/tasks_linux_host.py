@@ -226,17 +226,22 @@ def mount_nvme_download_volume(c: Connection, *, min_size_gb: int = 100) -> None
     c.sudo(f'mount {download_tmp}')
 
 
-def copy_runs_from_host(c: Connection, src_host: str, src_user: str | None = None) -> None:
+def copy_runs_from_host(
+    c: Connection, src_host: str, src_user: str | None = None, src_dir: str | None = None
+) -> None:
     """Seed this host's btrfs runs from an already-provisioned host via scp.
 
     Instead of downloading the multi-hundred-GB ``tiles.btrfs`` for each area from the web,
     copy the existing runs from a host you already operate. This is the fast path when baking a
     fresh golden AMI with new scripts/config but the **same tiles** (minutes instead of hours).
 
-    On both hosts the runs live under ``/data/ofm/linux_host/versions/<area>/<version>/``
-    (``tiles.btrfs`` plus its metadata json). They are copied into the same location here, so
-    the subsequent ``linux_host.py sync`` in ``local_versions`` mode serves them directly with no
-    download. Planet is the big one; the other areas are tiny and copied along with it.
+    The runs are always placed into this host's ``/data/ofm/linux_host/versions/<area>/<version>/``
+    so the subsequent ``linux_host.py sync`` in ``local_versions`` mode serves them directly with
+    no download. Planet is the big one; the other areas are tiny and copied along with it.
+
+    ``src_dir`` is the runs directory ON THE SOURCE host; it defaults to this host's versions dir.
+    Point it at ``/data/ofm/http_host/runs`` to seed from an old-layout host (the inner
+    ``<area>/<version>/tiles.btrfs`` layout is identical, only the base path differs).
 
     ``src_user`` defaults to the login user used to connect to this (target) host. The scp runs
     on the target as that login user, so SSH auth to ``src_host`` uses its forwarded ssh-agent
@@ -244,11 +249,12 @@ def copy_runs_from_host(c: Connection, src_host: str, src_user: str | None = Non
     ssh-agent holds a key that can reach ``src_host`` before running the deploy.
     """
     versions_dir = f'{linux_host_deploy_config.remote_linux_host_dir}/versions'
+    src_dir = src_dir or versions_dir
     login_user = get_username(c)
     src_user = src_user or login_user
     staging = f'{versions_dir}/_copy_tmp'
 
-    print(f'Copying btrfs runs from {src_user}@{src_host}:{versions_dir}')
+    print(f'Copying btrfs runs from {src_user}@{src_host}:{src_dir}')
 
     # /data/ofm is owned by ofm, so create a staging dir the (possibly non-ofm) login user
     # running scp is allowed to write into.
@@ -257,12 +263,12 @@ def copy_runs_from_host(c: Connection, src_host: str, src_user: str | None = Non
     c.sudo(f'mkdir -p {staging}')
     c.sudo(f'chown {login_user} {staging}')
 
-    # Copy every area dir from the source versions dir into staging; the trailing /. copies the
-    # contents (the <area> subdirs), not the versions dir itself.
+    # Copy every area dir from the source runs dir into staging; the trailing /. copies the
+    # contents (the <area> subdirs), not the runs dir itself.
     run_nice(
         c,
         f'scp -rp -o StrictHostKeyChecking=accept-new '
-        f'{shlex.quote(f"{src_user}@{src_host}:{versions_dir}")}/. {shlex.quote(staging)}/',
+        f'{shlex.quote(f"{src_user}@{src_host}:{src_dir}")}/. {shlex.quote(staging)}/',
     )
     # The source may itself contain a leftover staging dir; drop it.
     c.sudo(f'rm -rf {staging}/_copy_tmp')
