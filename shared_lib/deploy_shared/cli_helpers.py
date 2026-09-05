@@ -9,6 +9,48 @@ from invoke.exceptions import UnexpectedExit
 
 DEFAULT_SSH_USER = 'ec2-user'
 
+_agent_key_filter_installed = False
+
+
+def filter_unusable_agent_keys() -> None:
+    """Stop paramiko from choking on ssh-agent keys it cannot parse.
+
+    paramiko 5.x dropped DSA (``ssh-dss``) and never learned ed25519/ecdsa certificates. For
+    such an agent key it leaves ``AgentKey.inner_key`` as None and then raises
+    ``AttributeError: public_blob`` the instant it tries that key during authentication --
+    aborting the whole connection even when a perfectly good key is also loaded (paramiko's
+    own agent-auth loop only catches ``SSHException``, not this ``AttributeError``).
+
+    Rather than ask users to curate their ssh-agent for a deploy, we drop the keys paramiko
+    cannot parse from what it enumerates for authentication. The agent itself is left
+    untouched, and agent *forwarding* still exposes every key (DSA included) to remote hosts,
+    because forwarding proxies the raw agent socket and does not call ``get_keys``. So arcane
+    servers reached through the deploy target keep working.
+    """
+    global _agent_key_filter_installed
+    if _agent_key_filter_installed:
+        return
+    _agent_key_filter_installed = True
+
+    from paramiko.agent import Agent
+
+    original_get_keys = Agent.get_keys
+    warned: set[bytes] = set()
+
+    def get_keys(self: Agent) -> tuple[Any, ...]:
+        usable = []
+        for key in original_get_keys(self):
+            # inner_key is None exactly when paramiko could not decode the key type.
+            if getattr(key, 'inner_key', None) is not None:
+                usable.append(key)
+            elif key.blob not in warned:
+                warned.add(key.blob)
+                comment = getattr(key, 'comment', '') or 'no comment'
+                print(f'Ignoring ssh-agent key paramiko cannot use: {key.get_name()} ({comment})')
+        return tuple(usable)
+
+    Agent.get_keys = get_keys
+
 
 def resolve_deploy_targets(
     jsonc_data: dict[str, Any], hostname: str | None, user: str | None
@@ -57,6 +99,10 @@ def get_connection(hostname: str, user: str | None, port: int | None) -> Connect
             'allow_agent': False,
             'look_for_keys': False,
         }
+    else:
+        # Only agent-based auth enumerates agent keys, which is where paramiko trips over
+        # key types it cannot parse (e.g. DSA); skip those so one dead key can't abort auth.
+        filter_unusable_agent_keys()
 
     config = None
     if sudo_password:
