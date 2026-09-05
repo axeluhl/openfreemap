@@ -1,3 +1,10 @@
+node_modules
+pnpm-lock.yaml
+/pnpm-lock.yaml
+.idea/
+/.idea
+/agent_temp/
+
 *.pyc
 *.egg-info
 
@@ -9,16 +16,11 @@ rclone.conf
 .env
 .DS_Store
 
-node_modules
 tmp
 temp
 _temp
 
-/.idea
 venv
-
-
-/pnpm-lock.yaml
+.venv
 
 /deploy-*.sh
-.venv

@@ -7,9 +7,10 @@
 # (by name or ARN) via the authenticated `aws` CLI, then SSHes into each one
 # (using your local ssh-agent / key) and runs, on the host:
 #
-#     sudo http_host.py set-tile-auth-secrets   # reads the value from stdin
+#     sudo ./linux_host/scripts/linux_host.py set-tile-auth-secrets   # value from stdin
 #
-# which rewrites /data/ofm/config/config.json and reloads nginx *gracefully*
+# which rewrites /data/ofm/linux_host/state/tile_auth_secrets.json and reloads
+# nginx *gracefully*
 # (SIGHUP: existing connections keep being served by the old workers). The new
 # secret string travels over the SSH stdin pipe, so it never appears on any
 # local or remote command line / process list.
@@ -208,7 +209,7 @@ if [[ "$ASSUME_YES" -ne 1 ]]; then
 fi
 
 # ---- apply per host ---------------------------------------------------------
-REMOTE_CMD="sudo /data/ofm/venv/bin/python /data/ofm/http_host/bin/http_host.py set-tile-auth-secrets"
+REMOTE_CMD="sudo bash -lc 'cd /data/ofm/src && exec ./linux_host/scripts/linux_host.py set-tile-auth-secrets'"
 [[ "$CLEAR" -eq 1 ]] && REMOTE_CMD+=" --clear"
 
 SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new)
