@@ -35,6 +35,11 @@ def clean_linux_host(c: Connection, areas: list[str]) -> None:
     c.sudo('systemctl stop nginx', warn=True)
     unmounts = "findmnt -rn -o TARGET | grep '^/mnt/ofm/' | sort -r | xargs -r -n1 umount"
     c.sudo(f'bash -c {shlex.quote(unmounts)}')
+    # Drop the managed /mnt/ofm/ loop-mount lines from fstab (reconcile_mounts writes them so the
+    # mounts survive a reboot / AMI bake). Leaving them would make the next boot's `mount -a` fail
+    # on images this clean is about to remove; the following sync rewrites them for the new runs.
+    strip_fstab = "sed -i '\\#[[:space:]]/mnt/ofm/#d' /etc/fstab"
+    c.sudo(f'bash -c {shlex.quote(strip_fstab)}')
     c.sudo('rm -rf /mnt/ofm')
     c.sudo('mkdir -p /mnt/ofm')
 

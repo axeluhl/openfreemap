@@ -6,7 +6,7 @@ from linux_host.linux_host_lib.assets import download_assets
 from linux_host.linux_host_lib.btrfs import prepare_version
 from linux_host.linux_host_lib.linux_host_config import get_linux_host_config
 from linux_host.linux_host_lib.lock import host_lock
-from linux_host.linux_host_lib.mount import reconcile_mounts
+from linux_host.linux_host_lib.mount import create_fstab, reconcile_mounts
 from linux_host.linux_host_lib.nginx_config_gen import write_nginx_config_if_changed
 from linux_host.linux_host_lib.telegram_alerts import send_telegram_alert
 from linux_host.linux_host_lib.utils import assert_linux, assert_sudo
@@ -132,6 +132,10 @@ def garbage_collect(retained_versions: dict[str, set[str]]) -> None:
         for mnt in get_linux_host_config().mnt_dir.glob(f'{area}-*'):
             if mnt not in kept_mounts:
                 _remove_mount(mnt)
+
+    # Resync fstab to the images that actually remain after pruning, so a reboot between syncs
+    # never runs `mount -a` against a removed tiles.btrfs.
+    create_fstab()
 
     shutil.rmtree(get_linux_host_config().tmp_dir, ignore_errors=True)
 
