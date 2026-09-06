@@ -294,7 +294,10 @@ def run_linux_host_sync_detached(c: Connection, hostname: str) -> None:
         'env PYTHONUNBUFFERED=1 ./linux_host/scripts/linux_host.py sync'
     )
     c.sudo(f'tmux new-session -d -s ofm_linux_host_sync {shlex.quote(command)}')
-    print(f'Attach with: ssh -t {shlex.quote(hostname)} sudo tmux attach -t ofm_linux_host_sync')
+    # Include the SSH user so the printed command works verbatim; the local username
+    # (ssh's default) usually differs from the remote deploy user (e.g. ec2-user).
+    target = f'{c.user}@{hostname}' if c.user else hostname
+    print(f'Attach with: ssh -t {shlex.quote(target)} sudo tmux attach -t ofm_linux_host_sync')
 
 
 def install_linux_host_cron(c: Connection) -> None:
