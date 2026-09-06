@@ -7,6 +7,7 @@ import click
 
 from linux_host.deploy_linux_host.linux_host_deploy_config import linux_host_deploy_config
 from linux_host.deploy_linux_host.tasks_linux_host import (
+    assert_local_runs_present,
     clean_linux_host,
     copy_runs_from_host,
     install_linux_host_cron,
@@ -93,6 +94,11 @@ def deploy(
             )
         elif not no_nvme:
             mount_nvme_download_volume(c, min_size_gb=nvme_min_size_gb)
+        # local_versions serves pre-existing runs and downloads nothing; fail early (with a
+        # session still attached) if this host was never seeded, instead of dying in the
+        # detached background sync.
+        if jsonc_data.get('local_versions') and not copy_runs_src_host:
+            assert_local_runs_present(c, jsonc_data['areas'])
         if jsonc_data['auto_update']:
             install_linux_host_cron(c)
             click.echo(f'Automatic sync scheduled on {host}.')

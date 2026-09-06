@@ -2,6 +2,7 @@ import json
 import shlex
 from pathlib import Path
 
+import click
 from fabric import Connection
 
 from linux_host.deploy_linux_host.linux_host_deploy_config import linux_host_deploy_config
@@ -288,16 +289,49 @@ def copy_runs_from_host(
     c.sudo(f'rm -rf {staging}')
 
 
+def assert_local_runs_present(c: Connection, areas: list[str]) -> None:
+    """Fail early when local_versions serving is requested but the host holds no runs.
+
+    ``local_versions: true`` serves runs already materialized under ``versions/<area>/``
+    (golden AMI / copied runs) and downloads nothing. On a fresh host without seeded runs the
+    only symptom would otherwise be the detached sync raising ``no local runs found`` and
+    exiting within a second -- which tears down its tmux session before anyone can attach and
+    leaves the failure buried in the sync log. Check up front instead, with a clear message.
+    """
+    versions_dir = f'{linux_host_deploy_config.remote_linux_host_dir}/versions'
+    missing = []
+    for area in areas:
+        res = c.sudo(
+            f'ls {shlex.quote(versions_dir)}/{shlex.quote(area)}/*/tiles.btrfs',
+            warn=True,
+            hide=True,
+        )
+        if not res.ok:
+            missing.append(area)
+    if missing:
+        raise click.ClickException(
+            'config has "local_versions": true, which serves runs already present on the host, '
+            f'but this host has no runs for: {", ".join(missing)}.\n'
+            'Either set "local_versions": false to download the latest tiles from upstream, or '
+            'seed the host first with --copy-runs-from-host.'
+        )
+
+
 def run_linux_host_sync_detached(c: Connection, hostname: str) -> None:
-    command = (
+    log_file = f'{linux_host_deploy_config.remote_linux_host_dir}/logs/sync.log'
+    inner = (
         f'cd {linux_host_deploy_config.remote_source_dir} && '
         'env PYTHONUNBUFFERED=1 ./linux_host/scripts/linux_host.py sync'
     )
+    # Tee the sync's output to a persistent log so a crash (which ends the tmux session) still
+    # leaves a trace; tee also keeps writing to the pane, so `tmux attach` shows live output.
+    command = f'{inner} 2>&1 | tee -a {shlex.quote(log_file)}'
     c.sudo(f'tmux new-session -d -s ofm_linux_host_sync {shlex.quote(command)}')
     # Include the SSH user so the printed command works verbatim; the local username
     # (ssh's default) usually differs from the remote deploy user (e.g. ec2-user).
     target = f'{c.user}@{hostname}' if c.user else hostname
     print(f'Attach with: ssh -t {shlex.quote(target)} sudo tmux attach -t ofm_linux_host_sync')
+    print(f'Or follow the log: ssh -t {shlex.quote(target)} sudo tail -f {shlex.quote(log_file)}')
 
 
 def install_linux_host_cron(c: Connection) -> None:

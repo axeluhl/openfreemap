@@ -125,7 +125,14 @@ I recommend running things quickly first, with `"areas": ["monaco"]` and then on
     live. It prints a success message and a MapLibre style URL, `https://YOUR_DOMAIN/styles/liberty`.
 
     - With `auto_update: true`, the once-per-minute cron downloads and serves the tiles in the background.
-    - With `auto_update: false`, the deploy prints a tmux attach command so you can watch the one-off sync.
+    - With `auto_update: false`, the deploy prints a tmux attach command so you can watch the one-off sync. The
+      same output is appended to `/data/ofm/linux_host/logs/sync.log`, so if the sync fails fast (ending its tmux
+      session before you attach) the traceback is still there: `sudo tail -f /data/ofm/linux_host/logs/sync.log`.
+
+    > **Note:** `local_versions: true` serves runs already present on the host and downloads nothing. Deploying it
+    > to a host that was never seeded (no baked/copied runs, and no `--copy-runs-from-host`) now fails early with a
+    > clear message instead of dying inside the background sync. For a host that should fetch the latest tiles from
+    > upstream, use `local_versions: false`.
 
     Once the sync has finished, verify it yourself. Run this locally and make sure it shows HTTP/2 200. For example
     this is an OK response:
