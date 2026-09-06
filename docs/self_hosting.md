@@ -397,14 +397,25 @@ TILE_AUTH_SECRETS=k1:AbC-123_xyz,k2:Def-456_uvw
 There are three ways to apply them, all reading the value from **stdin** (so it never lands on a process list) and
 all reloading nginx gracefully afterwards:
 
-- **On a single running host** (over SSH):
+- **On a single running host.** From your workstation over SSH — the secret travels on the SSH
+  stdin pipe, so it never appears on any local or remote command line / process list:
 
   ```
   printf 'k1:AbC-123_xyz,k2:Def-456_uvw' | \
-    sudo ./linux_host/scripts/linux_host.py set-tile-auth-secrets
+    ssh ec2-user@<host> \
+    "sudo bash -lc 'cd /data/ofm/src && exec ./linux_host/scripts/linux_host.py set-tile-auth-secrets'"
   ```
 
-  Add `--clear` (with empty input) to make the host public again.
+  Or, already logged in on the host:
+
+  ```
+  printf 'k1:AbC-123_xyz,k2:Def-456_uvw' | \
+    sudo bash -lc 'cd /data/ofm/src && exec ./linux_host/scripts/linux_host.py set-tile-auth-secrets'
+  ```
+
+  The `cd /data/ofm/src` is required: the script's `uv run` shebang resolves the project (and the
+  relative path) from the uploaded source tree there. Add `--clear` (with empty stdin, e.g.
+  `< /dev/null`) to make the host public again.
 - **A whole running ASG fleet at once**: `rotate-tile-auth-secrets.sh` (see *Rotate the secret live* above).
 - **At boot from EC2 user data**: `ofm-tile-auth.service` (see *Secure the fleet without baking a secret into the
   AMI* above).
