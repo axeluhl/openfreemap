@@ -7,6 +7,7 @@ from linux_host.linux_host_lib.linux_host_config import get_linux_host_config
 from linux_host.linux_host_lib.metadata_to_tilejson import write_tilejson
 from linux_host.linux_host_lib.telegram_alerts import send_telegram_alert
 from linux_host.linux_host_lib.tile_auth import (
+    cors_preflight,
     secure_link_guard,
     secure_link_server_directives,
     write_secure_link_map,
@@ -139,7 +140,9 @@ def create_nginx_conf(
     # Fill the secure_link placeholders last so they also reach the dynamic location blocks
     # (both the generated ones and the static blocks); empty strings when auth is disabled.
     template = template.replace('__SECURE_LINK_SERVER__', secure_link_server_directives())
-    template = template.replace('__SECURE_LINK_GUARD__', secure_link_guard())
+    # The CORS preflight is always emitted (so OPTIONS returns 204 instead of 405 on the
+    # static-file locations); the secure_link token guard is only added when auth is enabled.
+    template = template.replace('__SECURE_LINK_GUARD__', cors_preflight() + secure_link_guard())
 
     template = template.replace('__DOMAIN_SLUG__', domain_data['slug'])
     template = template.replace('__DOMAIN__', domain_data['domain'])

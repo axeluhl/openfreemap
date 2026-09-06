@@ -116,19 +116,16 @@ def parse_tile_auth_secrets(raw: str) -> dict[str, str]:
     return result
 
 
-def secure_link_guard() -> str:
-    """Return the per-location ``secure_link`` guard + CORS preflight, or '' when disabled.
+def cors_preflight() -> str:
+    """Return the always-on CORS ``OPTIONS`` preflight short-circuit for a location.
 
-    Inserted right after each protected location's opening brace. ``$secure_link`` is nginx's
-    built-in verdict: ``''`` for a missing/malformed token, ``'0'`` for a bad or expired one
-    and ``'1'`` for a valid, unexpired one; both ``''`` and ``'0'`` are rejected. The OPTIONS
-    preflight short-circuits with 204 before any token is required (the token headers make the
-    browser send a CORS preflight). The 401 carries ``Access-Control-Allow-Origin`` because the
-    app runs on a different host than the tile server, so without it the cross-origin browser
-    would see an opaque error instead of a 401 and could not refresh the token.
+    Emitted for every asset/tile location (via the ``__SECURE_LINK_GUARD__`` anchor)
+    regardless of whether tile auth is enabled. Without it nginx answers ``OPTIONS`` on a
+    static-file location with ``405``, so the browser's CORS preflight fails and the map
+    never issues the actual ``GET``. The block short-circuits with ``204`` before any token
+    guard runs, so preflights succeed even when auth is on (the token headers themselves make
+    the browser send a preflight).
     """
-    if not get_tile_auth_secrets():
-        return ''
     return (
         '\n'
         "        if ($request_method = 'OPTIONS') {\n"
@@ -138,6 +135,22 @@ def secure_link_guard() -> str:
         "            add_header 'Access-Control-Max-Age' 86400 always;\n"
         '            return 204;\n'
         '        }\n'
+    )
+
+
+def secure_link_guard() -> str:
+    """Return the per-location ``secure_link`` token guard, or '' when auth is disabled.
+
+    Inserted right after each protected location's CORS preflight block. ``$secure_link`` is
+    nginx's built-in verdict: ``''`` for a missing/malformed token, ``'0'`` for a bad or expired
+    one and ``'1'`` for a valid, unexpired one; both ``''`` and ``'0'`` are rejected. The 401
+    carries ``Access-Control-Allow-Origin`` because the app runs on a different host than the
+    tile server, so without it the cross-origin browser would see an opaque error instead of a
+    401 and could not refresh the token.
+    """
+    if not get_tile_auth_secrets():
+        return ''
+    return (
         '        # tile-server access token (secure_link) required; secret via $ofm_secret map\n'
         "        if ($secure_link = '') {\n"
         "            add_header 'Access-Control-Allow-Origin' '*' always;\n"
