@@ -89,7 +89,27 @@ def write_nginx_config_if_changed(
         send_telegram_alert('ERROR\nnginx config test failed')
         result.check_returncode()
     if changed:
-        subprocess.run(['systemctl', 'reload', 'nginx'], check=True)
+        _reload_nginx_if_running()
+
+
+def _reload_nginx_if_running() -> None:
+    """Reload nginx to pick up a config change, but only if it is already running.
+
+    At boot ``ofm-tile-auth.service`` regenerates the config while ordered ``Before=nginx.service``,
+    so nginx is still inactive. ``systemctl reload nginx`` on an inactive unit escalates to a
+    *start*, whose job is queued behind this oneshot finishing -- a circular wait that hangs the
+    whole boot (the unit blocks on the reload; the reload blocks on nginx starting, which blocks
+    on the unit). Since nginx is ordered after us it reads the freshly written config on its own
+    start, so no reload is needed then. A reload only makes sense on the live-rotation / minutely
+    sync path, when nginx is already up; there the config was already validated by ``nginx -t``
+    above, so a reload failure is logged but never made fatal.
+    """
+    is_active = subprocess.run(['systemctl', 'is-active', '--quiet', 'nginx'])
+    if is_active.returncode != 0:
+        print('nginx is not running; skipping reload (it will load the new config on start)')
+        return
+    if subprocess.run(['systemctl', 'reload', 'nginx']).returncode != 0:
+        print('warning: nginx reload failed; the validated new config is in place on disk')
 
 
 def create_domain_config(

@@ -2,15 +2,19 @@
 Description=Ingest OpenFreeMap tile-auth secret from EC2 user data into the nginx config
 Documentation=https://github.com/hyperknot/openfreemap/blob/main/docs/self_hosting.md
 # The instance metadata service (IMDS) is link-local, so no internet is needed, but wait for
-# the network to be configured. local-fs.target guarantees the btrfs tiles under /mnt/ofm are
-# mounted (they come from /etc/fstab), which the nginx config generation needs to build the
-# location blocks.
+# the network to be configured. local-fs.target guarantees /data (the versions volume with the
+# btrfs images and the deployed-version state) is mounted before the nginx config generation
+# reads it to build the location blocks.
 Wants=network-online.target
 After=network-online.target local-fs.target
 # Ordering-only dependency: nginx starts *after* this unit at boot (both are pulled in by
 # multi-user.target), so a TILE_AUTH_SECRETS provided via user data is applied before nginx
 # serves. Deliberately NOT a hard Requires= on nginx's side -- a deploy-time or manual
-# `systemctl restart nginx` must never be blocked by this unit.
+# `systemctl restart nginx` must never be blocked by this unit. This unit must likewise never
+# block on nginx: its config generation reloads nginx only when nginx is already running (see
+# _reload_nginx_if_running), so at boot -- nginx still inactive -- it regenerates the config and
+# exits, and nginx reads that config when it starts. A reload here would escalate to a start
+# queued behind this oneshot and deadlock the boot.
 Before=nginx.service
 
 [Service]
