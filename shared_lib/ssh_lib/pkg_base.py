@@ -45,6 +45,7 @@ def pkg_base(c: Connection) -> None:
     optional = [
         'aria2',
         'htop',
+        'pv',  # live progress bar for the sync's checksum / decompress phases
         'tmux',
         'mc',
         'ncdu',

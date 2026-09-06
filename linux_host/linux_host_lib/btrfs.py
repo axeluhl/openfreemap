@@ -1,3 +1,4 @@
+import shlex
 import shutil
 import subprocess
 
@@ -24,6 +25,8 @@ def prepare_version(area: str, version: str) -> None:
     version_dir = get_linux_host_config().versions_dir / area / version
     if (version_dir / 'tiles.btrfs').is_file():
         return
+
+    print(f'Preparing {area} {version}', flush=True)
 
     shutil.rmtree(version_dir, ignore_errors=True)
     tmp_dir = get_linux_host_config().tmp_dir / area / version
@@ -65,22 +68,27 @@ def prepare_version(area: str, version: str) -> None:
                 f'not enough versions disk space. Needed: {btrfs_needed}, free space: {btrfs_free}'
             )
 
+        print(f'  downloading {gz_url} ({gz_size} bytes)', flush=True)
         download_file_aria2(gz_url, gz_file)
         if gz_file.stat().st_size != gz_size:
             raise RuntimeError(
                 f'incorrect file size: expected {gz_size}, got {gz_file.stat().st_size}'
             )
 
-        digest = subprocess.run(
-            ['sha256sum', str(gz_file)], capture_output=True, text=True, check=True
-        ).stdout.split()[0]
+        # sha256sum on a ~90 GB .gz can run for minutes with no output of its own; pipe it through
+        # pv (when installed) so a live progress bar / ETA appears on the tmux pane and an operator
+        # can tell the sync is progressing, not hung. pv paints to stderr, which the sync's
+        # `2>&1 | tee` forwards to the pane. Falls back to a plain sha256sum when pv is absent.
+        print(f'  verifying SHA-256 of {gz_file.name}', flush=True)
+        digest = _sha256_of(gz_file).split()[0]
         if digest.lower() != expected_gz_hash.lower():
             raise RuntimeError(f'SHA-256 mismatch for {gz_url}')
 
         # Stream-decompress from the (possibly NVMe) staging dir onto the versions volume.
-        # unpigz verifies the gzip CRC, so a correctly-decompressed image is guaranteed.
-        with open(btrfs_tmp, 'wb') as out:
-            subprocess.run(['unpigz', '-c', str(gz_file)], stdout=out, check=True)
+        # unpigz verifies the gzip CRC, so a correctly-decompressed image is guaranteed. pv (when
+        # installed) shows a live decompression progress bar on the pane; same fallback as above.
+        print(f'  decompressing to {btrfs_tmp}', flush=True)
+        _decompress(gz_file, btrfs_tmp)
         if btrfs_tmp.stat().st_size != btrfs_size:
             raise RuntimeError(
                 f'incorrect extracted size: expected {btrfs_size}, got {btrfs_tmp.stat().st_size}'
@@ -88,12 +96,49 @@ def prepare_version(area: str, version: str) -> None:
 
         btrfs_tmp.rename(btrfs_file)
         shutil.rmtree(tmp_dir, ignore_errors=True)
+        print(f'  finished {area} {version}', flush=True)
     except Exception:
         # Preparation only removes its disposable attempt and raises. The sync
         # caller decides whether this version is required or an optional prefetch.
         shutil.rmtree(tmp_dir, ignore_errors=True)
         shutil.rmtree(version_dir, ignore_errors=True)
         raise
+
+
+def _sha256_of(path) -> str:
+    """Return the ``sha256sum`` output line for ``path``.
+
+    Pipes the file through ``pv`` when it is installed so the tmux pane shows a live progress
+    bar (pv -> stderr, forwarded by the sync's ``2>&1 | tee``) while the hash is computed;
+    ``pv -f`` forces the bar even though stderr is a pipe, not a TTY. Falls back to a plain
+    ``sha256sum`` when pv is absent (mirrors the aria2 -> wget download fallback).
+    """
+    if shutil.which('pv'):
+        # `set -o pipefail` so a failing sha256sum (not just pv) fails the run.
+        cmd = f'set -o pipefail; pv -f {shlex.quote(str(path))} | sha256sum'
+        return subprocess.run(
+            ['bash', '-c', cmd], stdout=subprocess.PIPE, text=True, check=True
+        ).stdout
+    return subprocess.run(
+        ['sha256sum', str(path)], capture_output=True, text=True, check=True
+    ).stdout
+
+
+def _decompress(gz_path, out_path) -> None:
+    """Stream-decompress ``gz_path`` to ``out_path`` with ``unpigz``.
+
+    Uses ``pv`` for a live progress bar on the pane when installed (see :func:`_sha256_of`),
+    otherwise decompresses directly. Either way ``unpigz`` verifies the gzip CRC.
+    """
+    if shutil.which('pv'):
+        cmd = (
+            f'set -o pipefail; pv -f {shlex.quote(str(gz_path))} | '
+            f'unpigz -c > {shlex.quote(str(out_path))}'
+        )
+        subprocess.run(['bash', '-c', cmd], check=True)
+        return
+    with open(out_path, 'wb') as out:
+        subprocess.run(['unpigz', '-c', str(gz_path)], stdout=out, check=True)
 
 
 def get_sha256(base_url: str, filename: str) -> str:
