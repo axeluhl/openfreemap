@@ -9,8 +9,8 @@ from shared_lib.ssh_lib.utils import put
 LOGROTATE_PATH = '/etc/logrotate.d/openfreemap-nginx'
 
 
-def configure_nginx(c: Connection) -> None:
-    deploy_nginx_base_config(c, config.local_assets_dir / 'nginx')
+def configure_nginx(c: Connection, alb_mode: bool = False) -> None:
+    deploy_nginx_base_config(c, config.local_assets_dir / 'nginx', alb_mode=alb_mode)
     put(
         c,
         linux_host_deploy_config.local_linux_host_dir / 'logrotate.d' / 'openfreemap-nginx',

@@ -281,6 +281,13 @@ curl -s -o /dev/null -w '%{http_code}\n' http://localhost/healthz/planet    # ex
 `/healthz/<area>` returns **204** when that area's btrfs is mounted and **503** otherwise — this is the endpoint the
 ALB health check should target (see step 5).
 
+> **Why an ALB health check reaches `/healthz` regardless of Host.** An ALB health check sends `Host: <target-IP>`,
+> not your public domain, so it does not match the tile vhost's `server_name`. For that reason, when **every** domain
+> in the config uses `cert: alb`, the first ALB vhost is generated as the port-80 `default_server` and the deny-all
+> `default_disable` block is not installed. The IP-host health check therefore lands in the tile vhost and `/healthz`
+> answers correctly. (With a TLS `cert` type instead, `default_disable` stays in place and unknown Hosts are denied as
+> usual.) This is also why the `curl` above works with the default `Host: localhost`.
+
 **4. Create the AMI.** Optionally stop the instance first for a fully consistent snapshot, then
 *Actions → Image and templates → Create image* (or `aws ec2 create-image`). The AMI captures the root EBS volume with
 the mounted tiles; the ephemeral instance-store NVMe is excluded automatically, so the throwaway download bytes never

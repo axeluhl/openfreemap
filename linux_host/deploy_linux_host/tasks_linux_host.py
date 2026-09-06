@@ -64,9 +64,15 @@ def clean_linux_host(c: Connection, areas: list[str]) -> None:
 
 
 def prepare_linux_host(c: Connection, jsonc_path: Path) -> None:
+    jsonc_data = read_linux_host_jsonc_config(jsonc_path)
+    # All-ALB hosts serve plain HTTP behind an upstream TLS terminator; the first tile vhost
+    # owns the port-80 default_server (to answer ALB health checks by IP), so default_disable
+    # must not be installed.
+    alb_mode = all(domain_data['cert']['type'] == 'alb' for domain_data in jsonc_data['domains'])
+
     kernel_somaxconn65k(c)
     kernel_limits1m(c)
-    configure_nginx(c)
+    configure_nginx(c, alb_mode=alb_mode)
     install_tile_auth_service(c)
     # No host firewall on AL2023: inbound access is controlled by the AWS security group
     # (port 80 from the ALB, optionally 443 for non-ALB TLS cert types). Upstream's `ufw`
@@ -79,7 +85,6 @@ def prepare_linux_host(c: Connection, jsonc_path: Path) -> None:
     c.sudo(f'mkdir -p {nginx_logs_dir}')
     c.sudo(f'chown nginx:nginx {nginx_logs_dir}')
 
-    jsonc_data = read_linux_host_jsonc_config(jsonc_path)
     nginx_log_paths = ['/data/nginx/logs/nginx-error.log']
     for domain_data in jsonc_data['domains']:
         base_path = f'{nginx_logs_dir}/{domain_data["slug"]}'

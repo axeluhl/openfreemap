@@ -9,7 +9,7 @@ from .utils import exists, put
 NGINX_REPO_NAME = 'nginx'
 
 
-def deploy_nginx_base_config(c: Connection, assets_dir: str | Path) -> None:
+def deploy_nginx_base_config(c: Connection, assets_dir: str | Path, alb_mode: bool = False) -> None:
     update_nginx_packages(c)
 
     c.sudo('mkdir -p /data/nginx/config /data/nginx/logs /data/nginx/sites')
@@ -17,7 +17,13 @@ def deploy_nginx_base_config(c: Connection, assets_dir: str | Path) -> None:
     assets_dir = Path(assets_dir)
     put(c, assets_dir / 'nginx.conf', '/etc/nginx/nginx.conf')
     put(c, assets_dir / 'mime.types', '/etc/nginx/mime.types')
-    put(c, assets_dir / 'default_disable.conf', '/data/nginx/sites/default_disable.conf')
+    if alb_mode:
+        # An all-ALB host lets its first tile vhost own the port-80 default_server (so it
+        # answers ALB health checks that arrive by IP). default_disable would then be a second
+        # port-80 default_server -> nginx fatal; remove any copy left by an earlier deploy.
+        c.sudo('rm -f /data/nginx/sites/default_disable.conf')
+    else:
+        put(c, assets_dir / 'default_disable.conf', '/data/nginx/sites/default_disable.conf')
     put(c, assets_dir / 'cloudflare.conf', '/data/nginx/config/cloudflare.conf')
 
     c.sudo('nginx -t')

@@ -58,11 +58,16 @@ def write_nginx_config_if_changed(
     # own change must be tracked separately to decide whether a reload is needed.
     map_changed = write_secure_link_map()
 
+    domains = get_linux_host_config().domains
+    # When every domain is served plain-HTTP behind an ALB, the first ALB vhost becomes the
+    # port-80 default_server so it also answers ALB health checks (Host = target IP). In that
+    # mode the deploy does not install default_disable, so there is no default_server clash.
+    alb_mode = all(domain_data['cert']['type'] == 'alb' for domain_data in domains)
     desired = {
         f'ofm-{domain_data["slug"]}.conf': create_domain_config(
-            domain_data, retained_versions, active_versions
+            domain_data, retained_versions, active_versions, is_alb_default=(alb_mode and i == 0)
         )
-        for domain_data in get_linux_host_config().domains
+        for i, domain_data in enumerate(domains)
     }
     existing_files = list(get_linux_host_config().nginx_sites_dir.glob('ofm-*.conf'))
     existing = {path.name: path.read_text() for path in existing_files}
@@ -90,6 +95,7 @@ def create_domain_config(
     domain_data: dict[str, Any],
     retained_versions: dict[str, set[str]],
     active_versions: dict[str, str],
+    is_alb_default: bool = False,
 ) -> str:
     cert_type = domain_data['cert']['type']
     if cert_type == 'upload':
@@ -99,13 +105,14 @@ def create_domain_config(
         if not cert_file.is_file() or not key_file.is_file():
             sys.exit(f'  cert or key file does not exist: {cert_file} {key_file}')
 
-    return create_nginx_conf(domain_data, retained_versions, active_versions)
+    return create_nginx_conf(domain_data, retained_versions, active_versions, is_alb_default)
 
 
 def create_nginx_conf(
     domain_data: dict[str, Any],
     retained_versions: dict[str, set[str]],
     active_versions: dict[str, str],
+    is_alb_default: bool = False,
 ) -> str:
     dynamic_block_text = dynamic_blocks(domain_data, retained_versions, active_versions)
 
@@ -117,6 +124,8 @@ def create_nginx_conf(
         template_name = 'common.conf'
     template = (get_linux_host_config().nginx_templates_dir / template_name).read_text()
 
+    # Only the first ALB vhost claims the port-80 default_server (see write_nginx_config_if_changed).
+    template = template.replace('__ALB_DEFAULT__', ' default_server' if is_alb_default else '')
     template = template.replace('__DYNAMIC_BLOCKS__', dynamic_block_text)
     template = template.replace('__ACME_ISSUER__', acme_issuer(domain_data))
     template = template.replace('__HTTP_REDIRECT_SERVER__', HTTP_REDIRECT_SERVER)
