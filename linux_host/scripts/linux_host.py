@@ -29,6 +29,15 @@ def sync() -> None:
         send_telegram(f'sync failed: {type(e).__name__}: {e}')
         raise
 
+    # Final line of the run, so it is the last thing in sync.log / on the attached tmux
+    # pane. A `tail -f` or `tmux attach` watcher keeps running after the sync itself is
+    # done, with no other signal that it finished -- this banner is that signal.
+    print(
+        f'===\n{datetime.now(UTC)}\n'
+        'SUCCESS: sync finished. The host is serving tiles.\n'
+        'Nothing more will be printed for this run; you can press Ctrl-C to stop watching.'
+    )
+
 
 @cli.command('apply-user-data-secrets')
 def apply_user_data_secrets() -> None:
