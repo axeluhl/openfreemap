@@ -11,13 +11,14 @@ _TRUNCATION_MARKER = '\n\n[message truncated]\n\n'
 
 
 def send_telegram_message(
-    message: str,
+    message,
     *,
-    token: str | None,
-    chat_id: str | None,
-    topic_id: int | None = None,
-    header: str | None = None,
-) -> None:
+    token,
+    chat_id,
+    topic_id=None,
+    header=None,
+    silent=False,
+):
     """Send literal text with an optional bold MarkdownV2 header."""
     # Alerts must not hide the original failure when optional config is absent.
     if not token or not chat_id:
@@ -33,7 +34,7 @@ def send_telegram_message(
     # contain reserved punctuation that would otherwise reject the request.
     text = f'*{_escape_markdown(header)}*\n{body}' if header else body
 
-    payload: dict[str, object] = {
+    payload = {
         'chat_id': chat_id,
         'text': text,
         'parse_mode': 'MarkdownV2',
@@ -42,6 +43,8 @@ def send_telegram_message(
     # Telegram forum topics use message_thread_id; omit it for ordinary chats.
     if topic_id is not None:
         payload['message_thread_id'] = topic_id
+    if silent:
+        payload['disable_notification'] = True
 
     # Notification delivery is best effort. A Telegram or network failure must
     # not replace the application exception that caused the alert.
@@ -52,18 +55,18 @@ def send_telegram_message(
             timeout=5,
         )
         if response.status_code != 200:
-            print(f'[telegram] {response.text}')
+            print(f'[telegram] {_redact_token(response.text, token)}')
     except requests.RequestException as exc:
-        print(f'[telegram] {exc}')
+        print(f'[telegram] {_redact_token(str(exc), token)}')
 
 
-def _escape_markdown(text: str) -> str:
+def _escape_markdown(text):
     # This is Telegram's required MarkdownV2 reserved-character set. Include a
     # backslash itself so arbitrary input cannot create an escape sequence.
     return re.sub(r'([_*\[\]()~`>#+\-=|{}.!\\])', r'\\\1', text)
 
 
-def _truncate_message(message: str, limit: int = TELEGRAM_MESSAGE_LIMIT) -> str:
+def _truncate_message(message, limit=TELEGRAM_MESSAGE_LIMIT):
     if len(message) <= limit:
         return message
 
@@ -73,3 +76,7 @@ def _truncate_message(message: str, limit: int = TELEGRAM_MESSAGE_LIMIT) -> str:
     head_length = available // 2
     tail_length = available - head_length
     return message[:head_length] + _TRUNCATION_MARKER + message[-tail_length:]
+
+
+def _redact_token(text, token):
+    return text.replace(token, '[redacted]')

@@ -152,6 +152,8 @@ I recommend running things quickly first, with `"areas": ["monaco"]` and then on
 
     `https://YOUR_DOMAIN/planet/latest` always points to the active deployed Planet TileJSON, and
     `/planet/latest/{z}/{x}/{y}.pbf` serves its tiles. Any non-existing version also serves the active version.
+    `/planet/latest` and non-existing version responses may be cached for up to 1 day; specific version URLs are
+    cached long term.
 
 1.  **Deploy and check with `"areas": ["planet", "monaco"]`**
 
@@ -504,7 +506,7 @@ to the config.
 
 A normal deployment refuses to make any server change if a `make-tiles` build is running.
 
-Reinstall stops all tilegen commands and their child processes, verifies that they stopped, unmounts and verifies filesystems below `/data/ofm`, and then removes `/data/ofm`.
+Reinstall stops all tilegen commands and their child processes, verifies that they stopped, unmounts and verifies filesystems below `/data/ofm`, and then removes `/data/ofm`. `/data/ofm_keep` (Wikidata cache) is never deleted.
 
 Trigger a run manually over SSH as the `ofm` runtime user:
 

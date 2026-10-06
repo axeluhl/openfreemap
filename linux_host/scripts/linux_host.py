@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 import click
 
 from linux_host.linux_host_lib.sync import full_sync
+from linux_host.linux_host_lib.telegram_alerts import send_telegram
 from linux_host.linux_host_lib.user_data import (
     apply_user_data_tile_auth,
     set_tile_auth_secrets_from_stdin,
@@ -20,7 +21,13 @@ def cli() -> None:
 def sync() -> None:
     """Run the complete host sync task."""
     print(f'---\n{datetime.now(UTC)}\nStarting sync')
-    full_sync()
+    try:
+        full_sync()
+    except Exception as e:
+        # Cloudflare read errors are handled inside full_sync. Anything else alerts
+        # on every run until fixed.
+        send_telegram(f'sync failed: {type(e).__name__}: {e}')
+        raise
 
 
 @cli.command('apply-user-data-secrets')

@@ -1,11 +1,10 @@
 import subprocess
-import sys
 from pathlib import Path
 from typing import Any
 
 from linux_host.linux_host_lib.linux_host_config import get_linux_host_config
 from linux_host.linux_host_lib.metadata_to_tilejson import write_tilejson
-from linux_host.linux_host_lib.telegram_alerts import send_telegram_alert
+from linux_host.linux_host_lib.telegram_alerts import send_telegram
 from linux_host.linux_host_lib.tile_auth import (
     cors_preflight,
     secure_link_guard,
@@ -86,7 +85,7 @@ def write_nginx_config_if_changed(
     # no persistent reload marker makes stable minutely syncs stateless.
     result = subprocess.run(['nginx', '-t'])
     if result.returncode != 0:
-        send_telegram_alert('ERROR\nnginx config test failed')
+        send_telegram('ERROR\nnginx config test failed')
         result.check_returncode()
     if changed:
         _reload_nginx_if_running()
@@ -124,7 +123,7 @@ def create_domain_config(
         key_file = Path(f'/data/nginx/certs/ofm-{domain_data["slug"]}.key')
 
         if not cert_file.is_file() or not key_file.is_file():
-            sys.exit(f'  cert or key file does not exist: {cert_file} {key_file}')
+            raise FileNotFoundError(f'cert or key file does not exist: {cert_file} {key_file}')
 
     return create_nginx_conf(domain_data, retained_versions, active_versions, is_alb_default)
 
@@ -312,7 +311,7 @@ def create_latest_locations(*, domain_data: dict[str, Any], active_versions: dic
             continue
 
         # checking mnt dir
-        mnt_dir = Path(f'/mnt/ofm/{area}-{version}')
+        mnt_dir = get_linux_host_config().mnt_dir / f'{area}-{version}'
         mnt_file = mnt_dir / 'metadata.json'
         if not mnt_file.is_file():
             print(f'    skipping latest block for {area} / {version}: {mnt_file} does not exist')
@@ -336,8 +335,7 @@ __SECURE_LINK_GUARD__
 
         # Missing version URLs intentionally fall back to the active version.
         # This bounded-storage policy accepts mixed responses from shared caches.
-        # wildcard
-        # identical to create_version_location
+        # wildcard: like create_version_location, but cached 1d
         location_str += f"""
 
         # wildcard JSON {area}
@@ -348,7 +346,7 @@ __SECURE_LINK_GUARD__
 __SECURE_LINK_GUARD__
             try_files /tilejson-{domain_data['slug']}.json =404;
 
-            expires 1w;
+            expires 1d;
             default_type application/json;
 
             {PUBLIC_HEADERS}
@@ -362,10 +360,10 @@ __SECURE_LINK_GUARD__
 
             root {mnt_dir}/tiles/; # trailing slash
 __SECURE_LINK_GUARD__
-            try_files /$2 @empty_tile;
+            try_files /$2 @empty_tile_wildcard;
             add_header Content-Encoding gzip;
 
-            expires 10y;
+            expires 1d;
 
             types {{
                 application/vnd.mapbox-vector-tile pbf;

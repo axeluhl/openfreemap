@@ -8,7 +8,7 @@ from linux_host.linux_host_lib.linux_host_config import get_linux_host_config
 from linux_host.linux_host_lib.lock import host_lock
 from linux_host.linux_host_lib.mount import create_fstab, reconcile_mounts
 from linux_host.linux_host_lib.nginx_config_gen import write_nginx_config_if_changed
-from linux_host.linux_host_lib.telegram_alerts import send_telegram_alert
+from linux_host.linux_host_lib.telegram_alerts import send_telegram
 from linux_host.linux_host_lib.utils import assert_linux, assert_sudo
 from linux_host.linux_host_lib.versions import (
     get_local_deployed_versions,
@@ -16,7 +16,7 @@ from linux_host.linux_host_lib.versions import (
     get_remote_deployed_versions,
     write_version_files,
 )
-from shared_lib.utils.get_version import get_versions_for_area
+from shared_lib.utils.get_version import get_versions_by_area
 
 
 def full_sync() -> None:
@@ -41,7 +41,7 @@ def full_sync() -> None:
         try:
             download_assets()
         except Exception as e:
-            send_telegram_alert(f'ERROR\nasset sync failed\n{type(e).__name__}: {e}')
+            send_telegram(f'ERROR\nasset sync failed\n{type(e).__name__}: {e}')
             raise
 
         for area in get_linux_host_config().areas:
@@ -49,7 +49,7 @@ def full_sync() -> None:
             try:
                 prepare_version(area, deployed)
             except Exception as e:
-                send_telegram_alert(
+                send_telegram(
                     f'ERROR\nBTRFS download failed\n{area} {deployed}\n{type(e).__name__}: {e}'
                 )
                 raise
@@ -88,7 +88,7 @@ def full_sync_local_versions() -> None:
         try:
             download_assets()
         except Exception as e:
-            send_telegram_alert(f'ERROR\nasset sync failed\n{type(e).__name__}: {e}')
+            send_telegram(f'ERROR\nasset sync failed\n{type(e).__name__}: {e}')
             raise
 
         local_run_versions = get_local_run_versions()
@@ -109,7 +109,7 @@ def get_candidates() -> dict[str, str]:
     candidates: dict[str, str] = {}
     for area in get_linux_host_config().areas:
         try:
-            candidates[area] = get_versions_for_area(area)[-1]
+            candidates[area] = get_versions_by_area([area])[area][-1]
         except Exception as e:
             print(f'cannot fetch newest version for {area}: {type(e).__name__}: {e}')
     return candidates
