@@ -161,8 +161,10 @@ I recommend running things quickly first, with `"areas": ["monaco"]` and then on
     `./linux_host/deploy_linux_host.py --config self-hosted [--host HOSTNAME]` as before.
 
     Go for a walk and by the time you come back it should be up and running with the latest planet tiles deployed.
-    Don't worry about the "Download aborted" lines in the meanwhile, it's a bug in CloudFlare. If your server doesn't
-    have an SSD, the download + decompression process can take hours.
+    The sync shows a live progress bar on the tmux pane for the download, the SHA-256 verify and the decompression.
+    Occasional connection-retry lines from the downloader during the long transfer are harmless — the download
+    resumes and the result is verified by size and SHA-256 afterwards. If your server doesn't have an SSD, the
+    download + decompression process can take hours.
 
 ### Synchronization and retained versions
 
@@ -226,7 +228,8 @@ You pass the bake instance's IP on the command line with `--host` (below), so `h
 empty or omitted.
 
 Run the deploy from your workstation and wait for the one-off sync to download and decompress the tiles onto the root
-volume (this is the long step; the "Download aborted" lines from CloudFlare in the meantime are harmless):
+volume (this is the long step; the download, SHA-256 verify and decompression each show a live progress bar on the
+tmux pane, and occasional connection-retry lines during the transfer are harmless):
 
 ```
 ./linux_host/deploy_linux_host.py --config bake --host <IP-ADDRESS> --user ec2-user
