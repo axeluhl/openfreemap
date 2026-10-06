@@ -18,11 +18,18 @@ def cli() -> None:
 
 
 @cli.command()
-def sync() -> None:
+@click.option(
+    '--download',
+    'force_download',
+    is_flag=True,
+    help='Download from upstream even if the config sets "local_versions": true. Used by the '
+    'golden-AMI bake to fetch the tiles the fleet will later serve locally.',
+)
+def sync(force_download: bool) -> None:
     """Run the complete host sync task."""
     print(f'---\n{datetime.now(UTC)}\nStarting sync')
     try:
-        full_sync()
+        full_sync(force_download=force_download)
     except Exception as e:
         # Cloudflare read errors are handled inside full_sync. Anything else alerts
         # on every run until fixed.

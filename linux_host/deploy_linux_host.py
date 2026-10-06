@@ -14,6 +14,7 @@ from linux_host.deploy_linux_host.tasks_linux_host import (
     mount_nvme_download_volume,
     prepare_linux_host,
     run_linux_host_sync_detached,
+    run_linux_host_sync_foreground,
 )
 from linux_host.linux_host_lib.config_loader import (
     read_linux_host_jsonc_config,
@@ -58,6 +59,13 @@ from shared_lib.deploy_shared.tasks_shared import prepare_shared
     help='Minimum unformatted NVMe size (GB) to qualify as the download staging volume, sized for '
     'the ~90 GB gzipped planet download.',
 )
+@click.option(
+    '--bake',
+    is_flag=True,
+    help='Golden-AMI bake: with a local_versions config, download the tiles once (foreground, '
+    'overriding local_versions), then run the local-serve sync so the host ends ready to '
+    'snapshot. Replaces the manual download-then-flip-config dance.',
+)
 def deploy(
     config_name: str,
     hostname: str | None,
@@ -69,9 +77,22 @@ def deploy(
     copy_runs_src_dir: str | None,
     no_nvme: bool,
     nvme_min_size_gb: int,
+    bake: bool,
 ) -> None:
     jsonc_path, jsonc_data = load_jsonc_config(config_name)
     validate_local_cert_files(jsonc_path, jsonc_data)
+    if bake and copy_runs_src_host:
+        raise click.ClickException(
+            '--bake and --copy-runs-from-host are mutually exclusive.\n'
+            '--bake downloads the tiles from upstream; --copy-runs-from-host seeds them by scp '
+            'and needs no download. Pick one.'
+        )
+    if bake and not jsonc_data.get('local_versions'):
+        raise click.ClickException(
+            '--bake requires "local_versions": true in the config.\n'
+            'The bake produces a golden AMI whose fleet instances serve the baked tiles locally; '
+            '--bake downloads them once during the bake and leaves the host in local-serve mode.'
+        )
     if copy_runs_src_host and not jsonc_data.get('local_versions'):
         raise click.ClickException(
             '--copy-runs-from-host requires "local_versions": true in the config.\n'
@@ -94,6 +115,17 @@ def deploy(
             )
         elif not no_nvme:
             mount_nvme_download_volume(c, min_size_gb=nvme_min_size_gb)
+
+        if bake:
+            # Golden-AMI bake. The config is local_versions: true (the fleet's final state), but
+            # the bake box holds no tiles yet, so run the download foreground (overriding
+            # local_versions), then the local-serve sync to set the deployed pointer. Both block,
+            # so the host is fully provisioned and ready to snapshot when the deploy returns.
+            run_linux_host_sync_foreground(c, force_download=True)
+            run_linux_host_sync_foreground(c, force_download=False)
+            print_bake_success_message(host)
+            continue
+
         # local_versions serves pre-existing runs and downloads nothing; fail early (with a
         # session still attached) if this host was never seeded, instead of dying in the
         # detached background sync.
@@ -133,6 +165,20 @@ def print_success_message(jsonc_data: dict[str, Any]) -> None:
     click.secho('linux_host setup complete.', fg='green')
     click.echo('After synchronization, use this style URL in a MapLibre map:')
     click.secho(style_url, fg='cyan')
+    click.echo()
+
+
+def print_bake_success_message(host: str) -> None:
+    click.echo()
+    click.secho(f'Bake complete on {host}: tiles downloaded and serving locally.', fg='green')
+    click.echo('Verify on the box before snapshotting:')
+    click.secho('  curl -sI http://localhost/monaco | sort', fg='cyan')
+    click.secho(
+        "  curl -s -o /dev/null -w '%{http_code}\\n' http://localhost/healthz/planet", fg='cyan'
+    )
+    click.echo(
+        'Then create the AMI (no config edit needed — the host is already in local-serve mode).'
+    )
     click.echo()
 
 

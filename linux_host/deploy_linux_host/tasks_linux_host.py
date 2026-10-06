@@ -337,6 +337,30 @@ def run_linux_host_sync_detached(c: Connection, hostname: str) -> None:
     print(f'Or follow the log: ssh -t {shlex.quote(target)} sudo tail -f {shlex.quote(log_file)}')
 
 
+def run_linux_host_sync_foreground(c: Connection, *, force_download: bool) -> None:
+    """Run the host sync synchronously in the foreground, blocking until it finishes.
+
+    Unlike ``run_linux_host_sync_detached`` (which backgrounds the sync in tmux and returns
+    immediately), this runs the sync directly over the SSH connection so the deploy waits for
+    it and a non-zero exit fails the deploy. Used by the golden-AMI bake (``deploy --bake``),
+    where each phase must complete before the next and there is no tmux pane to attach to --
+    a pty is requested so the live ``pv`` progress bars reach the operator's terminal.
+
+    ``force_download`` passes ``--download`` so the bake downloads tiles even though the baked
+    config is ``local_versions: true``. Output is tee'd to the same ``sync.log`` as the
+    detached path so a bake leaves the same trace.
+    """
+    log_file = f'{linux_host_deploy_config.remote_linux_host_dir}/logs/sync.log'
+    download_flag = ' --download' if force_download else ''
+    inner = (
+        f'cd {linux_host_deploy_config.remote_source_dir} && '
+        f'env PYTHONUNBUFFERED=1 ./linux_host/scripts/linux_host.py sync{download_flag}'
+    )
+    command = f'{inner} 2>&1 | tee -a {shlex.quote(log_file)}'
+    # pipefail so a failing sync (not just tee) fails the deploy; pty so pv's progress bars render.
+    c.sudo(f'bash -o pipefail -c {shlex.quote(command)}', pty=True)
+
+
 def install_linux_host_cron(c: Connection) -> None:
     put(
         c,

@@ -215,25 +215,36 @@ The whole architecture stays **arm64**: the bake instance is Graviton, so the AM
   `tiles.btrfs` on the root/EBS volume is.
 - Security group: inbound SSH (22) from your workstation, and outbound HTTPS (443) so it can download the tiles.
 
-**2. Bake with `cert: alb` and `local_versions: true`.** Prepare a bake config (e.g.
+**2. Bake with `cert: alb`.** Prepare a bake config (e.g.
 `config/linux_host/bake.jsonc`) with:
 
 - `"cert": { "type": "alb" }` — the fleet serves plain HTTP:80 behind the ALB,
 - `"auto_update": false` — a golden AMI should serve a **fixed, immutable** version; you do not want each auto-scaled
   instance re-downloading tiles or drifting to a different version at boot,
-- `"local_versions": true` — so booted fleet instances serve the baked tiles without contacting the upstream pointer,
+- `"local_versions": true` — the baked **fleet** instances must serve the tiles they already hold and never contact
+  the upstream pointer at boot. This is the fleet's final state, so you set it in the config **once** and leave it
+  there; `--bake` (below) handles the fact that a fresh box must still download the tiles first.
 - `"areas": ["planet", "monaco"]`.
 
 You pass the bake instance's IP on the command line with `--host` (below), so `hosts` in the config can be left
 empty or omitted.
 
-Run the deploy from your workstation and wait for the one-off sync to download and decompress the tiles onto the root
-volume (this is the long step; the download, SHA-256 verify and decompression each show a live progress bar on the
-tmux pane, and occasional connection-retry lines during the transfer are harmless):
+Run the deploy from your workstation with `--bake`. A fresh box holds no tiles, but the config says
+`local_versions: true` ("serve what is already here, download nothing") — so `--bake` runs the sync in two
+foreground phases: first it **downloads** the tiles (overriding `local_versions` for this one run), then it runs the
+normal local-serve sync so the host ends in the exact state a fleet instance boots into. Both phases block, so when
+the command returns the box is fully provisioned and ready to snapshot. Wait for the one-off download to finish (this
+is the long step; the download, SHA-256 verify and decompression each show a live progress bar in your terminal, and
+occasional connection-retry lines during the transfer are harmless):
 
 ```
-./linux_host/deploy_linux_host.py --config bake --host <IP-ADDRESS> --user ec2-user
+./linux_host/deploy_linux_host.py --config bake --host <IP-ADDRESS> --user ec2-user --bake
 ```
+
+`--bake` requires `"local_versions": true` and is mutually exclusive with `--copy-runs-from-host` (that path seeds
+the runs by `scp` and needs no download — see below). There is **no config flip to remember**: the on-host
+`config.jsonc` is uploaded verbatim and stays `local_versions: true` throughout, so the imaged host is already in
+fleet mode.
 
 **Local NVMe for the download (on by default).** Before the download runs, the deploy looks for an *unformatted*
 NVMe disk (no filesystem, no partitions, not mounted) large enough to hold the ~90 GB **gzipped** planet download. If
@@ -299,6 +310,9 @@ ALB health check should target (see step 5).
 > `default_disable` block is not installed. The IP-host health check therefore lands in the tile vhost and `/healthz`
 > answers correctly. (With a TLS `cert` type instead, `default_disable` stays in place and unknown Hosts are denied as
 > usual.) This is also why the `curl` above works with the default `Host: localhost`.
+
+The host is already in `local_versions: true` fleet mode at this point — `--bake` left it there, and
+`--copy-runs-from-host` never leaves it — so there is nothing to flip before imaging; go straight to the snapshot.
 
 **4. Create the AMI.** Optionally stop the instance first for a fully consistent snapshot, then
 *Actions → Image and templates → Create image* (or `aws ec2 create-image`). The AMI captures the root EBS volume with

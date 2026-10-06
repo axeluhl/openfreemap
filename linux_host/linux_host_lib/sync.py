@@ -19,11 +19,14 @@ from linux_host.linux_host_lib.versions import (
 from shared_lib.utils.get_version import get_versions_by_area
 
 
-def full_sync() -> None:
+def full_sync(force_download: bool = False) -> None:
     assert_linux()
     assert_sudo()
 
-    if get_linux_host_config().local_versions:
+    # force_download overrides local_versions to run the download path. Used by the golden-AMI
+    # bake (deploy --bake): the baked config is local_versions: true, but the bake box must
+    # first download the tiles it will later serve locally. A normal run honors the config.
+    if get_linux_host_config().local_versions and not force_download:
         full_sync_local_versions()
         return
 
