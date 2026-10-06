@@ -8,7 +8,7 @@
 
       // Public server with direct Let's Encrypt access.
       // Certificates are issued and renewed by nginx's built-in ACME module:
-      "cert": { "type": "letsencrypt", "email": "admin@example.com" },
+      // "cert": { "type": "letsencrypt", "email": "admin@example.com" },
 
       // Recommended for production behind Cloudflare:
       // create an Origin Certificate and put both files next to each other:
