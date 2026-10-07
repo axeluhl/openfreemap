@@ -1,5 +1,6 @@
 import json
 import shlex
+import time
 from pathlib import Path
 
 import click
@@ -337,28 +338,74 @@ def run_linux_host_sync_detached(c: Connection, hostname: str) -> None:
     print(f'Or follow the log: ssh -t {shlex.quote(target)} sudo tail -f {shlex.quote(log_file)}')
 
 
-def run_linux_host_sync_foreground(c: Connection, *, force_download: bool) -> None:
-    """Run the host sync synchronously in the foreground, blocking until it finishes.
+def run_linux_host_sync_baked(c: Connection, hostname: str, *, force_download: bool) -> None:
+    """Run one bake sync phase in a detached tmux session, then wait for it to finish.
 
-    Unlike ``run_linux_host_sync_detached`` (which backgrounds the sync in tmux and returns
-    immediately), this runs the sync directly over the SSH connection so the deploy waits for
-    it and a non-zero exit fails the deploy. Used by the golden-AMI bake (``deploy --bake``),
-    where each phase must complete before the next and there is no tmux pane to attach to --
-    a pty is requested so the live ``pv`` progress bars reach the operator's terminal.
+    The golden-AMI bake (``deploy --bake``) needs the opposite of the two existing runners.
+    ``run_linux_host_sync_detached`` survives an SSH drop (the planet download runs for hours)
+    but returns immediately and never surfaces the result, so a bake could not tell the phases
+    apart or fail on a bad download. A plain foreground ``c.sudo`` surfaces the result but dies
+    with the SSH connection -- a dropped laptop link orphaned a half-finished download on the
+    box with no way to resume cleanly.
+
+    This runner gets both: the sync runs **inside a detached tmux session** (so it keeps going
+    across a disconnect), while the deploy **polls** for completion and reads an exit-code
+    sentinel the tmux command writes when the sync returns. If the operator's connection drops
+    during the long planet download, the remote sync keeps running to completion in tmux -- the
+    operator reconnects and watches it with the printed ``attach``/``tail`` commands rather than
+    re-running the deploy (a re-run would ``clean_linux_host`` the box, killing the live sync and
+    discarding the in-progress area; already-finished areas' ``tiles.btrfs`` images survive that
+    clean, so only an unfinished area is lost).
 
     ``force_download`` passes ``--download`` so the bake downloads tiles even though the baked
-    config is ``local_versions: true``. Output is tee'd to the same ``sync.log`` as the
-    detached path so a bake leaves the same trace.
+    config is ``local_versions: true``. Output is tee'd to the same ``sync.log`` as the other
+    runners; the sentinel lives beside it so a stale one from a previous phase is overwritten.
     """
     log_file = f'{linux_host_deploy_config.remote_linux_host_dir}/logs/sync.log'
+    status_file = f'{linux_host_deploy_config.remote_linux_host_dir}/logs/bake_sync.status'
+    session = 'ofm_linux_host_bake'
     download_flag = ' --download' if force_download else ''
+    phase = 'download' if force_download else 'local-serve'
+
     inner = (
         f'cd {linux_host_deploy_config.remote_source_dir} && '
         f'env PYTHONUNBUFFERED=1 ./linux_host/scripts/linux_host.py sync{download_flag}'
     )
-    command = f'{inner} 2>&1 | tee -a {shlex.quote(log_file)}'
-    # pipefail so a failing sync (not just tee) fails the deploy; pty so pv's progress bars render.
-    c.sudo(f'bash -o pipefail -c {shlex.quote(command)}', pty=True)
+    # pipefail so the sync's exit status (not tee's) is what reaches $?. The sentinel is written
+    # unconditionally after the pipeline so the poller can distinguish "still running" (no file)
+    # from "finished" (file holds the exit code) -- including a non-zero failure.
+    tmux_command = (
+        f'set -o pipefail; {inner} 2>&1 | tee -a {shlex.quote(log_file)}; '
+        f'echo $? > {shlex.quote(status_file)}'
+    )
+    # Clear any sentinel from an earlier phase/run, then launch detached. A session left over
+    # from a crashed run is killed first so the new phase starts clean.
+    c.sudo(f'rm -f {shlex.quote(status_file)}')
+    c.sudo(f'tmux kill-session -t {session} 2>/dev/null; true')
+    c.sudo(f'tmux new-session -d -s {session} bash -c {shlex.quote(tmux_command)}')
+
+    target = f'{c.user}@{hostname}' if c.user else hostname
+    print(f'Bake {phase} sync running detached in tmux on {hostname}; waiting for it to finish.')
+    print(f'  Attach:     ssh -t {shlex.quote(target)} sudo tmux attach -t {session}')
+    print(f'  Follow log: ssh -t {shlex.quote(target)} sudo tail -f {shlex.quote(log_file)}')
+
+    # Poll the sentinel. The download phase can run for hours; a dropped connection here does not
+    # kill the remote sync (it is in tmux), so it runs on to completion -- reconnect and attach
+    # rather than re-running the bake (see the docstring).
+    while True:
+        time.sleep(15)
+        result = c.sudo(f'cat {shlex.quote(status_file)} 2>/dev/null || true', hide=True)
+        raw = result.stdout.strip()
+        if not raw:
+            continue
+        code = int(raw)
+        if code != 0:
+            raise RuntimeError(
+                f'bake {phase} sync failed on {hostname} (exit {code}). '
+                f'See {log_file} on the host (attach command printed above).'
+            )
+        print(f'Bake {phase} sync finished on {hostname}.')
+        return
 
 
 def install_linux_host_cron(c: Connection) -> None:

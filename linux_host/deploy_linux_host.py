@@ -13,8 +13,8 @@ from linux_host.deploy_linux_host.tasks_linux_host import (
     install_linux_host_cron,
     mount_nvme_download_volume,
     prepare_linux_host,
+    run_linux_host_sync_baked,
     run_linux_host_sync_detached,
-    run_linux_host_sync_foreground,
 )
 from linux_host.linux_host_lib.config_loader import (
     read_linux_host_jsonc_config,
@@ -62,9 +62,10 @@ from shared_lib.deploy_shared.tasks_shared import prepare_shared
 @click.option(
     '--bake',
     is_flag=True,
-    help='Golden-AMI bake: with a local_versions config, download the tiles once (foreground, '
-    'overriding local_versions), then run the local-serve sync so the host ends ready to '
-    'snapshot. Replaces the manual download-then-flip-config dance.',
+    help='Golden-AMI bake: with a local_versions config, download the tiles once (overriding '
+    'local_versions), then run the local-serve sync so the host ends ready to snapshot. The '
+    'download runs detached in tmux and survives an SSH drop. Replaces the manual '
+    'download-then-flip-config dance.',
 )
 def deploy(
     config_name: str,
@@ -118,11 +119,13 @@ def deploy(
 
         if bake:
             # Golden-AMI bake. The config is local_versions: true (the fleet's final state), but
-            # the bake box holds no tiles yet, so run the download foreground (overriding
-            # local_versions), then the local-serve sync to set the deployed pointer. Both block,
-            # so the host is fully provisioned and ready to snapshot when the deploy returns.
-            run_linux_host_sync_foreground(c, force_download=True)
-            run_linux_host_sync_foreground(c, force_download=False)
+            # the bake box holds no tiles yet, so run the download phase first (overriding
+            # local_versions), then the local-serve sync to set the deployed pointer. Each phase
+            # runs detached in tmux and the deploy polls it to completion: the hours-long planet
+            # download survives an SSH drop, yet a failed download still fails the bake. When both
+            # finish the host is fully provisioned and ready to snapshot.
+            run_linux_host_sync_baked(c, host, force_download=True)
+            run_linux_host_sync_baked(c, host, force_download=False)
             print_bake_success_message(host)
             continue
 

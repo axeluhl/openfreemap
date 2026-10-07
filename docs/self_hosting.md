@@ -231,15 +231,30 @@ empty or omitted.
 
 Run the deploy from your workstation with `--bake`. A fresh box holds no tiles, but the config says
 `local_versions: true` ("serve what is already here, download nothing") — so `--bake` runs the sync in two
-foreground phases: first it **downloads** the tiles (overriding `local_versions` for this one run), then it runs the
-normal local-serve sync so the host ends in the exact state a fleet instance boots into. Both phases block, so when
-the command returns the box is fully provisioned and ready to snapshot. Wait for the one-off download to finish (this
-is the long step; the download, SHA-256 verify and decompression each show a live progress bar in your terminal, and
-occasional connection-retry lines during the transfer are harmless):
+phases: first it **downloads** the tiles (overriding `local_versions` for this one run), then it runs the
+normal local-serve sync so the host ends in the exact state a fleet instance boots into. Each phase runs
+**detached in a tmux session on the bake box** while the deploy polls it to completion, so the hours-long
+planet download **survives an SSH drop** — if your connection dies, the download keeps running on the box;
+reconnect and watch it with the `tmux attach` / `tail -f` commands the deploy prints (do **not** re-run the
+deploy to catch up — a re-run cleans the box and would kill the running download). A failed download still
+fails the bake. When both phases finish the box is fully provisioned and ready to snapshot (the download,
+SHA-256 verify and decompression each show a live progress bar on the tmux pane, and occasional
+connection-retry lines during the transfer are harmless):
 
 ```
 ./linux_host/deploy_linux_host.py --config bake --host <IP-ADDRESS> --user ec2-user --bake
 ```
+
+If your SSH connection to the bake box drops while the download is running, it keeps going in the tmux session
+on the box. Reconnect to watch it with the helper script (session name and log path are built in; pass the host
+and, if not `ec2-user`, the user):
+
+```
+./linux_host/attach_bake.sh <IP-ADDRESS> [ssh-user]          # re-attach to the tmux session
+./linux_host/attach_bake.sh --tail <IP-ADDRESS> [ssh-user]   # just follow the log
+```
+
+Detach from the attached session with **Ctrl-b d** — do **not** press Ctrl-c, which would signal the running sync.
 
 `--bake` requires `"local_versions": true` and is mutually exclusive with `--copy-runs-from-host` (that path seeds
 the runs by `scp` and needs no download — see below). There is **no config flip to remember**: the on-host
