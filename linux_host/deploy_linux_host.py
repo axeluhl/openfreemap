@@ -11,7 +11,6 @@ from linux_host.deploy_linux_host.tasks_linux_host import (
     clean_linux_host,
     copy_runs_from_host,
     install_linux_host_cron,
-    mount_nvme_download_volume,
     prepare_linux_host,
     run_linux_host_sync_baked,
     run_linux_host_sync_detached,
@@ -46,20 +45,6 @@ from shared_lib.deploy_shared.tasks_shared import prepare_shared
     '/data/ofm/linux_host/versions). Use /data/ofm/http_host/runs to seed from an old-layout host.',
 )
 @click.option(
-    '--no-nvme',
-    is_flag=True,
-    help='Do not stage the btrfs download on a local ephemeral NVMe; download onto the versions '
-    'volume instead.',
-)
-@click.option(
-    '--nvme-min-size-gb',
-    type=int,
-    default=100,
-    show_default=True,
-    help='Minimum unformatted NVMe size (GB) to qualify as the download staging volume, sized for '
-    'the ~90 GB gzipped planet download.',
-)
-@click.option(
     '--bake',
     is_flag=True,
     help='Golden-AMI bake: with a local_versions config, download the tiles once (overriding '
@@ -76,8 +61,6 @@ def deploy(
     copy_runs_src_host: str | None,
     copy_runs_user: str | None,
     copy_runs_src_dir: str | None,
-    no_nvme: bool,
-    nvme_min_size_gb: int,
     bake: bool,
 ) -> None:
     jsonc_path, jsonc_data = load_jsonc_config(config_name)
@@ -110,12 +93,10 @@ def deploy(
         prepare_shared(c, linux_host_deploy_config)
         prepare_linux_host(c, jsonc_path)
         if copy_runs_src_host:
-            # Runs are copied straight onto the versions volume; no download, so no NVMe staging.
+            # Runs are copied straight onto the versions volume instead of being downloaded.
             copy_runs_from_host(
                 c, copy_runs_src_host, copy_runs_user or ssh_user, copy_runs_src_dir
             )
-        elif not no_nvme:
-            mount_nvme_download_volume(c, min_size_gb=nvme_min_size_gb)
 
         if bake:
             # Golden-AMI bake. The config is local_versions: true (the fleet's final state), but

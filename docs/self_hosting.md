@@ -161,16 +161,14 @@ I recommend running things quickly first, with `"areas": ["monaco"]` and then on
     `./linux_host/deploy_linux_host.py --config self-hosted [--host HOSTNAME]` as before.
 
     Go for a walk and by the time you come back it should be up and running with the latest planet tiles deployed.
-    The sync shows a live progress bar on the tmux pane for the download, the SHA-256 verify and the decompression.
-    Occasional connection-retry lines from the downloader during the long transfer are harmless — the download
-    resumes and the result is verified by size and SHA-256 afterwards. If your server doesn't have an SSD, the
-    download + decompression process can take hours.
+    The sync shows a live progress bar on the tmux pane for the download. Occasional connection-retry lines from the
+    downloader during the long transfer are harmless — the download retries and the result is verified by size and
+    SHA-256 afterwards. If your server doesn't have an SSD, the download can take hours.
 
 ### Synchronization and retained versions
 
 A sync keeps the active deployed version available while it downloads and verifies a replacement in full. Verified
-images live under `versions/`. Each download starts from zero in a disposable `tmp/` directory; downloads are not
-resumed.
+images live under `versions/`. Each download starts from zero in a disposable `tmp/` directory.
 
 ### Local vs. upstream version management (`local_versions`)
 
@@ -202,17 +200,15 @@ The whole architecture stays **arm64**: the bake instance is Graviton, so the AM
 
 **1. Launch the bake instance.** From a clean **Amazon Linux 2023 (arm64)** image:
 
-- Instance type **`m6gd.large`** (2 vCPU, 8 GB RAM, 1×118 GB instance-store NVMe). The 118 GB NVMe is a good fit for
-  the ~90 GB **gzipped** planet download (see *Local NVMe for the download* below); any Graviton type with a similarly
-  sized instance-store NVMe works. If you use `--copy-runs-from-host` (below) you don't need the NVMe and a plain
-  `t4g.small`/`m6g.large` is fine.
+- Instance type **`t4g.small`** — the same type the fleet will run, so you bake on the real target. The download
+  streams straight onto the root/EBS volume, so no instance-store NVMe is needed. `t4g.small` is burstable (2 vCPU,
+  2 GB RAM); 2 GB RAM is plenty for the download, and the bake runs detached in tmux so the hours-long planet
+  download survives an SSH drop regardless of how long it takes.
 - A single **200 GB gp3 root** EBS volume — same size the `t4g.small` fleet will run, so the AMI is sized right. It
-  must hold the extracted, **uncompressed** `tiles.btrfs` (~165 GB for planet). During the bake, temporarily raise the
-  root volume's gp3 throughput (e.g. to 500–1000 MB/s) so the large write to EBS is fast; runtime reads on
-  `t4g.small` are unaffected by that setting.
-- The 118 GB NVMe is left **unformatted** — the deploy detects it and uses it to stage the download (see *Local NVMe
-  for the download* below). It is instance-store, so it is **never captured in the AMI**; only the extracted
-  `tiles.btrfs` on the root/EBS volume is.
+  must hold the downloaded `tiles.btrfs` (~165 GB for planet). During the bake, temporarily raise the root volume's
+  gp3 throughput (e.g. to 500–1000 MB/s) so the large download write to EBS is fast; runtime reads on `t4g.small`
+  are unaffected by that setting. A burstable instance + gp3 makes the download slower in wall-clock than a big box
+  would, but it is cheap and correct.
 - Security group: inbound SSH (22) from your workstation, and outbound HTTPS (443) so it can download the tiles.
 
 **2. Bake with `cert: alb`.** Prepare a bake config (e.g.
@@ -237,9 +233,8 @@ normal local-serve sync so the host ends in the exact state a fleet instance boo
 planet download **survives an SSH drop** — if your connection dies, the download keeps running on the box;
 reconnect and watch it with the `tmux attach` / `tail -f` commands the deploy prints (do **not** re-run the
 deploy to catch up — a re-run cleans the box and would kill the running download). A failed download still
-fails the bake. When both phases finish the box is fully provisioned and ready to snapshot (the download,
-SHA-256 verify and decompression each show a live progress bar on the tmux pane, and occasional
-connection-retry lines during the transfer are harmless):
+fails the bake. When both phases finish the box is fully provisioned and ready to snapshot (the download shows a
+live progress bar on the tmux pane, and occasional connection-retry lines during the transfer are harmless):
 
 ```
 ./linux_host/deploy_linux_host.py --config bake --host <IP-ADDRESS> --user ec2-user --bake
@@ -260,23 +255,6 @@ Detach from the attached session with **Ctrl-b d** — do **not** press Ctrl-c, 
 the runs by `scp` and needs no download — see below). There is **no config flip to remember**: the on-host
 `config.jsonc` is uploaded verbatim and stays `local_versions: true` throughout, so the imaged host is already in
 fleet mode.
-
-**Local NVMe for the download (on by default).** Before the download runs, the deploy looks for an *unformatted*
-NVMe disk (no filesystem, no partitions, not mounted) large enough to hold the ~90 GB **gzipped** planet download. If
-found, it partitions it (GPT, one partition), formats it ext4 and mounts it at the download staging dir
-(`/data/ofm/linux_host/tmp`). The `.gz` then lands on fast, cheap local NVMe and is **stream-decompressed straight
-onto the root/EBS volume** (`unpigz -c`), so the extracted ~165 GB `tiles.btrfs` — the thing the AMI captures — stays
-on EBS, while only the throwaway ~90 GB `.gz` lives on the NVMe. Since instance-store NVMe is never part of an AMI,
-the download bytes are automatically excluded from the image. Existing/formatted disks (including the root disk) are
-never touched, and if no suitable disk is found the download goes onto the versions volume instead.
-
-- `--no-nvme` — disable the NVMe search entirely and download onto the versions volume.
-- `--nvme-min-size-gb N` — minimum unformatted disk size to qualify (default `100`, sized for the ~90 GB gzipped
-  planet download).
-
-Note: instance-store NVMe is *ephemeral* — it is wiped on stop/start. The fstab entry uses `nofail`, so a later
-stop/start (which brings the volume back blank) never blocks boot; a subsequent sync then simply falls back to the
-versions volume. The extracted `tiles.btrfs` already lives on EBS, so it survives the stop/start regardless.
 
 **Fast re-bake with unchanged tiles (`--copy-runs-from-host`).** When you re-bake only to pick up new
 scripts/config (as after a rebase onto a new upstream) but the **tiles are unchanged**, you do not need to
@@ -331,13 +309,7 @@ The host is already in `local_versions: true` fleet mode at this point — `--ba
 
 **4. Create the AMI.** Optionally stop the instance first for a fully consistent snapshot, then
 *Actions → Image and templates → Create image* (or `aws ec2 create-image`). The AMI captures the root EBS volume with
-the mounted tiles; the ephemeral instance-store NVMe is excluded automatically, so the throwaway download bytes never
-end up in the image.
-
-Optional tidy-up before imaging: if the NVMe download volume was used, the deploy left an fstab entry for it
-(`UUID=… /data/ofm/linux_host/tmp ext4 defaults,nofail 0 2`). It is harmless on the fleet — `nofail` means a
-`t4g.small` with no such NVMe boots fine and the tiles still mount from the root volume — but you may remove that one
-line from `/etc/fstab` before baking to keep the image clean.
+the downloaded, mounted tiles.
 
 **5. Wire up the ALB + Auto Scaling Group.** Boot `t4g.small` instances from the AMI:
 

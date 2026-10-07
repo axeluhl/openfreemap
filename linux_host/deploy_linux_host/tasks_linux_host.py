@@ -1,4 +1,3 @@
-import json
 import shlex
 import time
 from pathlib import Path
@@ -12,9 +11,8 @@ from linux_host.linux_host_lib.config_loader import (
     read_linux_host_jsonc_config,
     resolve_upload_cert_paths,
 )
-from shared_lib.ssh_lib.dnf import dnf_install
 from shared_lib.ssh_lib.kernel import kernel_limits1m, kernel_somaxconn65k
-from shared_lib.ssh_lib.utils import append_str, get_username, put, run_nice
+from shared_lib.ssh_lib.utils import get_username, put, run_nice
 
 
 def clean_linux_host(c: Connection, areas: list[str]) -> None:
@@ -49,15 +47,7 @@ def clean_linux_host(c: Connection, areas: list[str]) -> None:
     keep_areas = ' '.join(f'! -name {shlex.quote(area)}' for area in areas)
     c.sudo(f'find {versions_dir} -mindepth 1 -maxdepth 1 {keep_areas} -exec rm -rf -- {{}} +')
     c.sudo(f'rm -rf {linux_host_deploy_config.remote_linux_host_dir}/runs')
-    # The download staging dir may be a mounted ephemeral NVMe (mount_nvme_download_volume):
-    # emptying its contents but keeping the mountpoint avoids a "device busy" failure on rm and
-    # preserves the NVMe mount across a redeploy. If it is a plain dir, remove it outright.
-    tmp_dir = f'{linux_host_deploy_config.remote_linux_host_dir}/tmp'
-    clean_tmp = (
-        f'if mountpoint -q {tmp_dir}; then find {tmp_dir} -mindepth 1 -delete; '
-        f'else rm -rf {tmp_dir}; fi'
-    )
-    c.sudo(f'bash -c {shlex.quote(clean_tmp)}')
+    c.sudo(f'rm -rf {linux_host_deploy_config.remote_linux_host_dir}/tmp')
 
     c.sudo(
         f'rm -rf {linux_host_deploy_config.remote_source_dir} '
@@ -156,84 +146,6 @@ def install_tile_auth_service(c: Connection) -> None:
     )
     c.sudo('systemctl daemon-reload')
     c.sudo('systemctl enable ofm-tile-auth.service')
-
-
-def mount_nvme_download_volume(c: Connection, *, min_size_gb: int = 100) -> None:
-    """Put the (throwaway) compressed btrfs download on a local ephemeral NVMe, if available.
-
-    If an unformatted NVMe disk large enough to hold the ~90 GB gzipped planet download is
-    present, it is partitioned (GPT, one partition), formatted (ext4) and mounted at the download
-    staging dir (``/data/ofm/linux_host/tmp``). The ``.gz`` then lands on fast, ephemeral local
-    NVMe and is stream-decompressed straight onto the versions volume (see ``prepare_version`` in
-    linux_host_lib/btrfs.py), so the extracted ``tiles.btrfs`` -- the thing an AMI should capture
-    -- stays on EBS while only the disposable ``.gz`` bytes live on the NVMe. Instance-store NVMe
-    is never part of an AMI, so the download data is automatically excluded from any image.
-
-    Only *unformatted* disks are considered: no filesystem, no partitions, not mounted. Existing
-    data is therefore never touched. This matches instance-store NVMe (e.g. the 118 GB volume on
-    an ``m6gd.large``) and any extra blank NVMe-attached volume.
-
-    Instance-store NVMe is ephemeral (wiped on stop/start), so the fstab entry uses ``nofail`` to
-    never block boot if the volume comes back blank or is gone; the download then simply falls
-    back to the versions (EBS) volume.
-    """
-    download_tmp = f'{linux_host_deploy_config.remote_linux_host_dir}/tmp'
-    print(f'Looking for an unformatted NVMe volume for the btrfs download ({download_tmp})')
-
-    c.sudo(f'mkdir -p {download_tmp}')
-    if c.sudo(f'mountpoint -q {download_tmp}', warn=True, hide=True).ok:
-        print(f'  {download_tmp} is already a mount point, skipping')
-        return
-
-    out = c.run('lsblk -b -J -o NAME,TYPE,SIZE,FSTYPE,MOUNTPOINT', hide=True).stdout
-    devices = json.loads(out)['blockdevices']
-
-    min_bytes = min_size_gb * 1000**3
-    candidates = []
-    for dev in devices:
-        if dev.get('type') != 'disk':
-            continue
-        if not dev['name'].startswith('nvme'):
-            continue
-        # skip anything already carrying a filesystem, partitions or a mount
-        if dev.get('fstype') or dev.get('mountpoint') or dev.get('children'):
-            continue
-        if int(dev.get('size') or 0) < min_bytes:
-            continue
-        candidates.append(dev)
-
-    if not candidates:
-        print(
-            f'  no unformatted NVMe disk >= {min_size_gb} GB found, '
-            f'downloading onto the versions volume'
-        )
-        return
-
-    # pick the largest suitable disk
-    dev = max(candidates, key=lambda d: int(d['size']))
-    devpath = f'/dev/{dev["name"]}'
-    print(f'  using {devpath} ({int(dev["size"]) / 1000**3:.0f} GB) for the btrfs download')
-
-    # parted is not guaranteed on a bare image, and this may run before pkg_base
-    dnf_install(c, 'parted', warn=True)
-
-    # GPT label + a single partition spanning the whole disk
-    c.sudo(f'parted -s {devpath} mklabel gpt')
-    c.sudo(f'parted -s -a optimal {devpath} mkpart primary ext4 0% 100%')
-    c.sudo('udevadm settle', warn=True)
-
-    # NVMe partition node: nvme1n1 -> nvme1n1p1
-    partpath = f'{devpath}p1'
-
-    # -m 0: don't reserve 5% for root, we only store the throwaway .gz here
-    c.sudo(f'mkfs.ext4 -F -m 0 {partpath}')
-
-    uuid = c.sudo(f'blkid -s UUID -o value {partpath}', hide=True).stdout.strip()
-
-    c.sudo(f'mkdir -p {download_tmp}')
-    fstab_line = f'UUID={uuid} {download_tmp} ext4 defaults,nofail 0 2'
-    append_str(c, '/etc/fstab', fstab_line, check_duplicate=True)
-    c.sudo(f'mount {download_tmp}')
 
 
 def copy_runs_from_host(
