@@ -50,8 +50,6 @@ def prepare_version(area: str, version: str) -> None:
             raise CloudflareError('tiles.btrfs is missing from SHA256SUMS')
 
         remote_size = get_remote_file_size(url)
-        if remote_size is None:
-            raise RuntimeError(f'cannot get remote file size for {url}')
 
         tmp_dir.mkdir(parents=True)
         needed_space = remote_size + 1024**3

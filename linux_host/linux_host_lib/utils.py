@@ -45,7 +45,13 @@ def download_file_aria2(url: str, local_file: Path) -> None:
             local_file.name,
             url,
         ]
-        subprocess.run(args, check=True)
+        code = subprocess.run(args).returncode
+        # Local, not Cloudflare: negative = killed by a signal (e.g. OOM); 9, 13-18: disk
+        # full, file exists, rename, open/create/IO, mkdir; 28: bad option (code/aria2 version)
+        if code < 0 or code in {9, 13, 14, 15, 16, 17, 18, 28}:
+            raise RuntimeError(f'aria2c exit {code} for {url}')
+        if code != 0:
+            raise CloudflareError(f'aria2c exit {code} for {url}')
         return
 
     # aria2 is not in the Amazon Linux 2023 base repos; fall back to wget, which is always
@@ -65,9 +71,5 @@ def download_file_aria2(url: str, local_file: Path) -> None:
         url,
     ]
     code = subprocess.run(args).returncode
-    # Local, not Cloudflare: negative = killed by a signal (e.g. OOM); 9, 13-18: disk
-    # full, file exists, rename, open/create/IO, mkdir; 28: bad option (code/aria2 version)
-    if code < 0 or code in {9, 13, 14, 15, 16, 17, 18, 28}:
-        raise RuntimeError(f'aria2c exit {code} for {url}')
     if code != 0:
-        raise CloudflareError(f'aria2c exit {code} for {url}')
+        raise CloudflareError(f'wget exit {code} for {url}')
