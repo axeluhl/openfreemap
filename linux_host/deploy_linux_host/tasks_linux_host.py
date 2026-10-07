@@ -283,12 +283,23 @@ def run_linux_host_sync_baked(c: Connection, hostname: str, *, force_download: b
         f'cd {linux_host_deploy_config.remote_source_dir} && '
         f'env PYTHONUNBUFFERED=1 ./linux_host/scripts/linux_host.py sync{download_flag}'
     )
-    # pipefail so the sync's exit status (not tee's) is what reaches $?. The sentinel is written
-    # unconditionally after the pipeline so the poller can distinguish "still running" (no file)
-    # from "finished" (file holds the exit code) -- including a non-zero failure.
+    # pipefail so the sync's exit status (not tee's) is what reaches $rc. A clear terminal line is
+    # printed through the same tee *before* the sentinel is written, so a `tmux attach` / `tail -f`
+    # watcher sees an explicit OK/FAILED verdict in the log and pane (the per-area 'finished' lines
+    # don't mark the whole phase, and the bare sentinel write is silent). The trailing sleep keeps
+    # the pane up briefly so an attached viewer reads the line before tmux ends the session. The
+    # sentinel is still written last and unconditionally, so the poller can distinguish "still
+    # running" (no file) from "finished" (file holds the exit code), including a non-zero failure.
+    done_ok = f'===== BAKE {phase.upper()} SYNC OK on {hostname} -- phase complete ====='
+    done_fail_prefix = f'===== BAKE {phase.upper()} SYNC FAILED on {hostname} (exit '
+    report_done = (
+        f'if [ "$rc" -eq 0 ]; then echo {shlex.quote(done_ok)}; '
+        f'else echo {shlex.quote(done_fail_prefix)}"$rc"") ====="; fi'
+    )
     tmux_command = (
-        f'set -o pipefail; {inner} 2>&1 | tee -a {shlex.quote(log_file)}; '
-        f'echo $? > {shlex.quote(status_file)}'
+        f'set -o pipefail; {{ {inner}; }} 2>&1 | tee -a {shlex.quote(log_file)}; '
+        f'rc=${{PIPESTATUS[0]}}; {{ {report_done}; }} 2>&1 | tee -a {shlex.quote(log_file)}; '
+        f'echo "$rc" > {shlex.quote(status_file)}; sleep 5'
     )
     # Clear any sentinel from an earlier phase/run, then launch detached. A session left over
     # from a crashed run is killed first so the new phase starts clean.
@@ -298,8 +309,13 @@ def run_linux_host_sync_baked(c: Connection, hostname: str, *, force_download: b
 
     target = f'{c.user}@{hostname}' if c.user else hostname
     print(f'Bake {phase} sync running detached in tmux on {hostname}; waiting for it to finish.')
-    print(f'  Attach:     ssh -t {shlex.quote(target)} sudo tmux attach -t {session}')
-    print(f'  Follow log: ssh -t {shlex.quote(target)} sudo tail -f {shlex.quote(log_file)}')
+    print('  Watch it (open in a SECOND terminal; leave this deploy running so it can chain the')
+    print('  next phase and report success):')
+    print(f'    Attach:     ssh -t {shlex.quote(target)} sudo tmux attach -t {session}')
+    print(f'    Follow log: ssh -t {shlex.quote(target)} sudo tail -f {shlex.quote(log_file)}')
+    print('  Ctrl-C here stops only this poller, NOT the remote sync (it keeps running in tmux)')
+    print('  -- but then no further phase runs and no success message prints. Do NOT re-run the')
+    print('  deploy to "resume": a re-run cleans the box and kills the running sync.')
 
     # Poll the sentinel. The download phase can run for hours; a dropped connection here does not
     # kill the remote sync (it is in tmux), so it runs on to completion -- reconnect and attach
